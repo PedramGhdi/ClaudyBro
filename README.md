@@ -34,11 +34,13 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
   ![Child Processes](screenshots/child-processes.png)
 
-- **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually or in bulk from the orphan detail panel. MCP servers are excluded from false-positive alerts.
+- **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually or in bulk from the orphan detail panel.
 
   ![Orphan Detection](screenshots/orphan-detection.png)
 
-- **MCP-aware monitoring** — ClaudyBro identifies MCP servers (Shadcn, Brave Search, Playwright, Context7) by inspecting their command-line args via `KERN_PROCARGS2`. These are legitimately idle and excluded from orphan detection.
+- **Smart MCP cleanup** — Duplicate MCP servers are automatically killed (keeps the newest instance). When Claude exits, all remaining MCP servers are terminated automatically — no more leftover node processes eating memory.
+
+- **MCP-aware monitoring** — ClaudyBro identifies MCP servers (Shadcn, Brave Search, Playwright, Context7) by inspecting their command-line args via `KERN_PROCARGS2`. These are tagged with an "MCP" badge in the process inspector and excluded from false-positive orphan alerts.
 
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
