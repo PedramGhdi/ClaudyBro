@@ -6,16 +6,23 @@ A lightweight, purpose-built macOS terminal for [Claude Code](https://docs.anthr
 
 ## Performance
 
-Benchmarked on Apple Silicon, all running an idle shell session:
+Benchmarked on Apple Silicon (idle shell, no Claude running):
 
 | Metric | ClaudyBro | Ghostty | Warp |
 |--------|-----------|---------|------|
-| **Memory (RSS)** | 90.8 MB | 97.3 MB | ~250 MB |
-| **CPU (idle)** | 0.0% | 13.5% | ~5% |
-| **Disk size** | 3.4 MB | 62 MB | 326 MB |
+| **Memory (RSS)** | 68.5 MB | 80.9 MB | ~250 MB |
+| **CPU (idle)** | 0.0% | 0.0% | ~5% |
+| **Disk size** | 3.5 MB | 62 MB | 326 MB |
 | **Startup** | < 0.5s | ~ 0.5s | ~2s |
 
-ClaudyBro is **18x smaller than Ghostty** and **96x smaller than Warp** on disk.
+With Claude Code running (idle, waiting for input):
+
+| Metric | ClaudyBro | Ghostty | Warp |
+|--------|-----------|---------|------|
+| **Memory (RSS)** | 81.9 MB | 139.8 MB | ~300 MB |
+| **CPU (idle)** | 0.0% | 0.0% | ~5% |
+
+ClaudyBro is **18x smaller than Ghostty** and **93x smaller than Warp** on disk, and uses **41% less memory** than Ghostty with Claude running.
 
 ## Why ClaudyBro?
 
@@ -23,9 +30,15 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Image paste** — Claude Code can't receive images from the clipboard in most terminals. ClaudyBro intercepts Cmd+V, detects image data, saves it to a temp file, and injects the path into your prompt. Just copy a screenshot and paste.
 
-- **Orphaned process cleanup** — Claude Code's `getDiagnostics` and MCP servers spawn node processes that sometimes outlive their parent tool call. ClaudyBro tracks the entire child process tree, detects idle orphans, and lets you kill them individually or in bulk — with a detail panel showing what each process actually is.
+- **Process inspector** — Click the child process count in the status bar to see every process Claude has spawned — name, PID, memory usage, and whether it's an MCP server. No more guessing what's running.
 
-- **MCP-aware monitoring** — Unlike naive process monitors, ClaudyBro identifies MCP servers (Shadcn, Brave Search, Playwright, Context7) by inspecting their command-line args via `KERN_PROCARGS2`. These are legitimately idle and excluded from false-positive orphan alerts.
+  ![Child Processes](screenshots/child-processes.png)
+
+- **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually or in bulk from the orphan detail panel. MCP servers are excluded from false-positive alerts.
+
+  ![Orphan Detection](screenshots/orphan-detection.png)
+
+- **MCP-aware monitoring** — ClaudyBro identifies MCP servers (Shadcn, Brave Search, Playwright, Context7) by inspecting their command-line args via `KERN_PROCARGS2`. These are legitimately idle and excluded from orphan detection.
 
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
@@ -37,6 +50,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Image paste** | Cmd+V detects clipboard images, saves to `/tmp/claudybro/`, injects path |
 | **File drop** | Drag PNG/JPG/PDF/SVG onto the terminal to inject file paths |
 | **Tabs** | Cmd+T new tab, Cmd+W close, Cmd+Shift+]/[ switch |
+| **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
 | **Claude launcher** | Toolbar buttons for `claude` and `claude --dangerously-skip-permissions` |

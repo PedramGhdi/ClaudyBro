@@ -16,6 +16,7 @@ final class ProcessMonitor: ObservableObject {
 
     private var timer: Timer?
     private var claudePID: pid_t = 0
+    private var claudeWasRunning: Bool = false
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -89,6 +90,9 @@ final class ProcessMonitor: ObservableObject {
             var tracked = childProcesses.first(where: { $0.pid == entry.pid })
                 ?? createTrackedProcess(from: entry)
 
+            // Always fetch memory for the child process panel
+            tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
+
             // Only run orphan detection on node processes that are NOT MCP servers
             if tracked.isNodeProcess && !tracked.isMCPServer {
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
@@ -109,7 +113,6 @@ final class ProcessMonitor: ObservableObject {
                         tracked.isOrphanCandidate = true
                         tracked.orphanSince = Date()
                     }
-                    tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
                     if let since = tracked.orphanSince,
                        Date().timeIntervalSince(since) >= orphanTimeout
@@ -121,6 +124,29 @@ final class ProcessMonitor: ObservableObject {
 
             updated.append(tracked)
         }
+
+        // Kill duplicate MCP servers (keep newest, kill older ones)
+        let duplicatePids = findDuplicateMCPServers(in: updated)
+        for pid in duplicatePids {
+            kill(pid, SIGTERM)
+            updated.removeAll { $0.pid == pid }
+        }
+
+        // Detect Claude exit — if Claude was running but no claude process remains, kill MCP servers
+        let claudeStillRunning = updated.contains {
+            $0.processDescription.lowercased().contains("claude")
+        }
+        if claudeWasRunning && !claudeStillRunning && !updated.isEmpty {
+            let mcpPids = updated.filter(\.isMCPServer).map(\.pid)
+            for pid in mcpPids { kill(pid, SIGTERM) }
+            updated.removeAll { $0.isMCPServer }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                for pid in mcpPids {
+                    if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
+                }
+            }
+        }
+        claudeWasRunning = claudeStillRunning
 
         // Also get current directory (from deepest child or shell)
         var cwd = ""
@@ -143,6 +169,27 @@ final class ProcessMonitor: ObservableObject {
                 self?.cleanupOrphans()
             }
         }
+    }
+
+    /// Find duplicate MCP servers — returns PIDs of older duplicates to kill.
+    private func findDuplicateMCPServers(in processes: [TrackedProcess]) -> [pid_t] {
+        let mcpServers = processes.filter(\.isMCPServer)
+        var seen: [String: TrackedProcess] = [:]
+        var duplicates: [pid_t] = []
+
+        // Group by description, keep newest (highest PID = most recent)
+        for server in mcpServers {
+            let key = server.processDescription
+            if let existing = seen[key] {
+                // Kill the older one (lower PID)
+                let older = existing.pid < server.pid ? existing : server
+                duplicates.append(older.pid)
+                seen[key] = existing.pid < server.pid ? server : existing
+            } else {
+                seen[key] = server
+            }
+        }
+        return duplicates
     }
 
     /// First-time discovery: fetch command line info to identify the process.

@@ -39,10 +39,7 @@ struct MainWindow: View {
                 }
             }
 
-            if let tab = tabManager.activeTab,
-               tab.processMonitor.hasActiveProcesses
-                || !tab.processMonitor.orphanedProcesses.isEmpty
-            {
+            if let tab = tabManager.activeTab {
                 StatusBarView(
                     processMonitor: tab.processMonitor,
                     claudePID: tab.processManager.claudePID

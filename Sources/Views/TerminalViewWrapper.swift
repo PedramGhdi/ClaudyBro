@@ -115,8 +115,20 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         case "k":
             send(txt: "\u{0C}")
             return true
-        case "\u{7F}": // Cmd+Delete → kill entire line (Ctrl+E to end, then Ctrl+U)
-            send(txt: "\u{05}\u{15}")
+        case "\u{7F}": // Cmd+Delete → kill entire line (Ctrl+U)
+            send(txt: "\u{15}")
+            return true
+        default:
+            break
+        }
+
+        // Cmd+Arrow keys (by keyCode since arrow chars aren't in charactersIgnoringModifiers reliably)
+        switch event.keyCode {
+        case 123: // Cmd+Left → Home (move to beginning of line)
+            send(txt: "\u{01}") // Ctrl+A
+            return true
+        case 124: // Cmd+Right → End (move to end of line)
+            send(txt: "\u{05}") // Ctrl+E
             return true
         default:
             return super.performKeyEquivalent(with: event)

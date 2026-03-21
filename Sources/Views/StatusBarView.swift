@@ -6,6 +6,7 @@ struct StatusBarView: View {
     let claudePID: pid_t
 
     @State private var showOrphanPanel = false
+    @State private var showChildPanel = false
 
     private let textColor = Color(nsColor: Constants.statusTextColor)
 
@@ -17,7 +18,14 @@ struct StatusBarView: View {
 
             let childCount = processMonitor.childProcesses.count
             if childCount > 0 {
-                label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
+                Button(action: { showChildPanel.toggle() }) {
+                    label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
+                }
+                .buttonStyle(.plain)
+                .cursor(.pointingHand)
+                .popover(isPresented: $showChildPanel, arrowEdge: .top) {
+                    ChildProcessPanel(processMonitor: processMonitor)
+                }
             }
 
             Spacer()
@@ -68,6 +76,130 @@ struct StatusBarView: View {
     private var orphanMemory: String {
         let bytes = processMonitor.orphanedProcesses.reduce(UInt64(0)) { $0 + $1.memoryBytes }
         return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+    }
+}
+
+// MARK: - Child Process Panel (popover content)
+
+struct ChildProcessPanel: View {
+    @ObservedObject var processMonitor: ProcessMonitor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Child Processes")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(processMonitor.childProcesses.count) total")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if processMonitor.childProcesses.isEmpty {
+                HStack {
+                    Spacer()
+                    Text("No child processes")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 20)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(processMonitor.childProcesses) { process in
+                            ChildProcessRow(process: process) {
+                                processMonitor.killProcess(process.pid)
+                            }
+                            Divider().padding(.leading, 40)
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+            }
+        }
+        .frame(width: 380)
+    }
+}
+
+// MARK: - Child Process Row
+
+struct ChildProcessRow: View {
+    let process: TrackedProcess
+    let onKill: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 14))
+                .foregroundColor(iconColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(process.processDescription.isEmpty ? process.name : process.processDescription)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Text("PID \(process.pid)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+
+                    if process.memoryBytes > 0 {
+                        Text(process.formattedMemory)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+
+                    if process.isMCPServer {
+                        Text("MCP")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.green.opacity(0.15))
+                            .cornerRadius(3)
+                    }
+                }
+            }
+
+            Spacer()
+
+            Button(action: onKill) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.red.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .cursor(.pointingHand)
+            .help("Kill this process")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var iconName: String {
+        if process.isMCPServer { return "server.rack" }
+        let desc = process.processDescription.lowercased()
+        if desc.contains("claude") { return "brain" }
+        if desc.contains("typescript") || desc.contains("tsserver") { return "chevron.left.forwardslash.chevron.right" }
+        if desc.contains("diagnostics") { return "stethoscope" }
+        if desc.contains("node") { return "circle.hexagongrid" }
+        return "gearshape"
+    }
+
+    private var iconColor: Color {
+        if process.isMCPServer { return .green }
+        let desc = process.processDescription.lowercased()
+        if desc.contains("claude") { return .purple }
+        if desc.contains("typescript") { return .blue }
+        if desc.contains("diagnostics") { return .orange }
+        return .gray
     }
 }
 
