@@ -32,11 +32,11 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Process inspector** — Click the child process count in the status bar to see every process Claude has spawned — name, PID, memory usage, and whether it's an MCP server. No more guessing what's running.
 
-  ![Child Processes](screenshots/child-processes.png)
+  ![Child Processes](screenshots/child-processes-v2.png)
 
 - **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually or in bulk from the orphan detail panel.
 
-  ![Orphan Detection](screenshots/orphan-detection.png)
+  ![Orphan Detection](screenshots/orphan-detection-v2.png)
 
 - **Smart MCP cleanup** — Duplicate MCP servers are automatically killed (keeps the newest instance). When Claude exits, all remaining MCP servers are terminated automatically — no more leftover node processes eating memory.
 
