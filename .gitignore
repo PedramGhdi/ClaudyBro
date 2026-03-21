@@ -1,0 +1,36 @@
+# Build artifacts
+.build/
+build/
+DerivedData/
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+._*
+*.dSYM
+*.dSYM.zip
+
+# Code signing
+*.mobileprovision
+*.p12
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Temp files
+/tmp/claudybro/

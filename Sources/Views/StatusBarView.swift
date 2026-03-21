@@ -1,0 +1,245 @@
+import SwiftUI
+
+/// Bottom status strip with orphan detail popover.
+struct StatusBarView: View {
+    @ObservedObject var processMonitor: ProcessMonitor
+    let claudePID: pid_t
+
+    @State private var showOrphanPanel = false
+
+    private let textColor = Color(nsColor: Constants.statusTextColor)
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if claudePID > 0 {
+                label("PID \(claudePID)")
+            }
+
+            let childCount = processMonitor.childProcesses.count
+            if childCount > 0 {
+                label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
+            }
+
+            Spacer()
+
+            if !processMonitor.orphanedProcesses.isEmpty {
+                orphanBadge
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .frame(height: 24)
+        .background(Color(nsColor: Constants.statusBarBackground))
+    }
+
+    // MARK: - Orphan Badge (clickable → opens detail panel)
+
+    private var orphanBadge: some View {
+        let count = processMonitor.orphanedProcesses.count
+        let mem = orphanMemory
+
+        return Button(action: { showOrphanPanel.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(nsColor: Constants.warningColor))
+
+                Text("\(count) orphaned (\(mem))")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color(nsColor: Constants.warningColor))
+            }
+        }
+        .buttonStyle(.plain)
+        .cursor(.pointingHand)
+        .popover(isPresented: $showOrphanPanel, arrowEdge: .top) {
+            OrphanDetailPanel(
+                processMonitor: processMonitor,
+                isPresented: $showOrphanPanel
+            )
+        }
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(textColor)
+    }
+
+    private var orphanMemory: String {
+        let bytes = processMonitor.orphanedProcesses.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+    }
+}
+
+// MARK: - Orphan Detail Panel (popover content)
+
+struct OrphanDetailPanel: View {
+    @ObservedObject var processMonitor: ProcessMonitor
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Orphaned Processes")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(processMonitor.orphanedProcesses.count) total")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            // Process list
+            if processMonitor.orphanedProcesses.isEmpty {
+                HStack {
+                    Spacer()
+                    Text("No orphaned processes")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 20)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(processMonitor.orphanedProcesses) { process in
+                            OrphanProcessRow(process: process) {
+                                processMonitor.killProcess(process.pid)
+                            }
+                            Divider().padding(.leading, 40)
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+            }
+
+            Divider()
+
+            // Footer with Clean All
+            HStack {
+                Text(totalMemoryText)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button(action: {
+                    processMonitor.cleanupOrphans()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        if processMonitor.orphanedProcesses.isEmpty {
+                            isPresented = false
+                        }
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                        Text("Clean All")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.red.opacity(0.8))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .cursor(.pointingHand)
+                .disabled(processMonitor.orphanedProcesses.isEmpty)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .frame(width: 380)
+    }
+
+    private var totalMemoryText: String {
+        let bytes = processMonitor.orphanedProcesses.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+        let formatted = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+        return "Total: \(formatted)"
+    }
+}
+
+// MARK: - Individual Process Row
+
+struct OrphanProcessRow: View {
+    let process: TrackedProcess
+    let onKill: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Icon
+            Image(systemName: iconName)
+                .font(.system(size: 14))
+                .foregroundColor(iconColor)
+                .frame(width: 24)
+
+            // Description + PID
+            VStack(alignment: .leading, spacing: 2) {
+                Text(process.processDescription.isEmpty ? process.name : process.processDescription)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Text("PID \(process.pid)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+
+                    if process.memoryBytes > 0 {
+                        Text(process.formattedMemory)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Text(process.formattedIdleTime)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Color(nsColor: Constants.warningColor))
+                }
+            }
+
+            Spacer()
+
+            // Kill button
+            Button(action: onKill) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.red.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .cursor(.pointingHand)
+            .help("Kill this process")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var iconName: String {
+        let desc = process.processDescription.lowercased()
+        if desc.contains("typescript") || desc.contains("tsserver") { return "chevron.left.forwardslash.chevron.right" }
+        if desc.contains("diagnostics") { return "stethoscope" }
+        if desc.contains("npm") { return "shippingbox" }
+        if desc.contains("node") { return "circle.hexagongrid" }
+        return "gearshape"
+    }
+
+    private var iconColor: Color {
+        let desc = process.processDescription.lowercased()
+        if desc.contains("typescript") { return .blue }
+        if desc.contains("diagnostics") { return .orange }
+        return .gray
+    }
+}
+
+// MARK: - Cursor modifier
+
+extension View {
+    func cursor(_ cursor: NSCursor) -> some View {
+        onHover { inside in
+            if inside { cursor.push() } else { NSCursor.pop() }
+        }
+    }
+}

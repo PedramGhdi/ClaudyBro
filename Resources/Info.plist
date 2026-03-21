@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>ClaudyBro</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.claudybro.terminal</string>
+    <key>CFBundleName</key>
+    <string>ClaudyBro</string>
+    <key>CFBundleDisplayName</key>
+    <string>ClaudyBro</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>ClaudyBro needs access to your Desktop so Claude Code can read and write project files.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>ClaudyBro needs access to your Documents so Claude Code can read and write project files.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>ClaudyBro needs access to your Downloads so Claude Code can read and write files.</string>
+</dict>
+</plist>
