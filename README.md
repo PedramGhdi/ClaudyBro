@@ -47,7 +47,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Terminal engine** | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (LocalProcessTerminalView) |
 | **Image paste** | Cmd+V detects clipboard images, saves to `/tmp/claudybro/`, injects path |
 | **File drop** | Drag PNG/JPG/PDF/SVG onto the terminal to inject file paths |
-| **Tabs** | Cmd+T new tab, Cmd+W close, Cmd+Shift+]/[ switch |
+| **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, directory in tab title |
 | **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
@@ -65,8 +65,11 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | Cmd+K | Clear terminal |
 | Cmd+T | New tab |
 | Cmd+W | Close tab |
+| Cmd+1..9 | Switch to tab N |
 | Cmd+Shift+] | Next tab |
 | Cmd+Shift+[ | Previous tab |
+| Cmd+Arrow Left | Home (beginning of line) |
+| Cmd+Arrow Right | End (end of line) |
 | Cmd+Shift+K | Kill orphaned processes |
 | Cmd+, | Settings |
 
@@ -160,6 +163,10 @@ Settings are stored at `~/.config/claudybro/config.json`:
 - **Process queries**: Darwin sysctl, proc_pidinfo (no shell exec)
 - **Build**: Swift Package Manager + release optimizations (WMO, LTO)
 - **Sandbox**: Disabled (required for subprocess access)
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history and detailed changes.
 
 ## License
 
