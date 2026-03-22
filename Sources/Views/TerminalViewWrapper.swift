@@ -102,6 +102,8 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     // MARK: - Keyboard Shortcuts (Cmd+ only)
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isActiveTab else { return super.performKeyEquivalent(with: event) }
+
         guard event.modifierFlags.contains(.command),
               let chars = event.charactersIgnoringModifiers
         else {

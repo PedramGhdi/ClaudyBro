@@ -5,7 +5,7 @@ struct TabBarView: View {
     @ObservedObject var tabManager: TabManager
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(tabManager.tabs) { tab in
                 TabItem(
                     title: tab.title,
@@ -46,43 +46,57 @@ private struct TabItem: View {
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 10))
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10))
 
-                Text(title)
-                    .font(.system(size: 11, weight: isActive ? .medium : .regular, design: .monospaced))
-                    .lineLimit(1)
+            Text(title)
+                .font(.system(size: 11, weight: isActive ? .medium : .regular, design: .monospaced))
+                .lineLimit(1)
 
-                if canClose && (isActive || isHovered) {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 14, height: 14)
-                            .background(Color.white.opacity(0.1))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
+            if canClose && (isActive || isHovered) {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Circle())
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(isHovered ? 0.15 : 0.1))
+                        )
                 }
+                .buttonStyle(.plain)
+                .cursor(.pointingHand)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .foregroundColor(isActive ? .white : Color(nsColor: Constants.statusTextColor))
-            .background(
-                isActive
-                    ? Color(nsColor: Constants.backgroundColor)
-                    : Color.clear
-            )
-            .overlay(
-                Rectangle()
-                    .frame(height: 2)
-                    .foregroundColor(isActive ? Color(nsColor: Constants.accentColor) : .clear),
-                alignment: .bottom
-            )
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .foregroundColor(isActive ? .white : Color(nsColor: Constants.statusTextColor))
+        .background(tabBackground)
+        .overlay(
+            Rectangle()
+                .frame(height: 2)
+                .foregroundColor(isActive ? Color(nsColor: Constants.accentColor) : .clear),
+            alignment: .bottom
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
         .onHover { isHovered = $0 }
+        .cursor(.pointingHand)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+    }
+
+    @ViewBuilder
+    private var tabBackground: some View {
+        if isActive {
+            Color(nsColor: Constants.backgroundColor)
+        } else if isHovered {
+            Color.white.opacity(0.05)
+        } else {
+            Color.clear
+        }
     }
 }
