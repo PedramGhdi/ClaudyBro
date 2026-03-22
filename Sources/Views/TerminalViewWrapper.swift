@@ -38,6 +38,11 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     func updateNSView(_ nsView: ClaudyTerminalView, context: Context) {
         nsView.isActiveTab = isActive
+        if isActive {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 }
 
@@ -102,7 +107,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     // MARK: - Keyboard Shortcuts (Cmd+ only)
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard isActiveTab else { return super.performKeyEquivalent(with: event) }
+        guard isActiveTab else { return false }
 
         guard event.modifierFlags.contains(.command),
               let chars = event.charactersIgnoringModifiers
