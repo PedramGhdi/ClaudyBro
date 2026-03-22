@@ -86,6 +86,11 @@ final class TabManager: ObservableObject {
         activeTabId = tabs[idx].id
     }
 
+    func selectTabByIndex(_ index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        activeTabId = tabs[index].id
+    }
+
     // MARK: - Private
 
     private func showCloseConfirmation(message: String, info: String) -> Bool {
