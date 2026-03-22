@@ -49,6 +49,19 @@ struct ClaudyBroApp: App {
                     NotificationCenter.default.post(name: .previousTab, object: nil)
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
+
+                Divider()
+
+                // Cmd+1 through Cmd+9 for direct tab selection
+                ForEach(1...9, id: \.self) { index in
+                    Button("Tab \(index)") {
+                        NotificationCenter.default.post(
+                            name: .selectTabByIndex, object: nil,
+                            userInfo: ["index": index - 1]
+                        )
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index))), modifiers: .command)
+                }
             }
 
             // Process commands
@@ -95,4 +108,5 @@ extension Notification.Name {
     static let closeTab = Notification.Name("com.claudybro.closeTab")
     static let nextTab = Notification.Name("com.claudybro.nextTab")
     static let previousTab = Notification.Name("com.claudybro.previousTab")
+    static let selectTabByIndex = Notification.Name("com.claudybro.selectTabByIndex")
 }

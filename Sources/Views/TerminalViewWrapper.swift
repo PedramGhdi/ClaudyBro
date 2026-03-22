@@ -20,24 +20,28 @@ struct TerminalViewWrapper: NSViewRepresentable {
             currentDirectory: lastDir
         )
 
-        // One-shot shell PID discovery
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            [weak processManager, weak processMonitor] in
-            guard let pm = processManager else { return }
-            let appPID = ProcessInfo.processInfo.processIdentifier
-            let children = ProcessTreeQuery.getChildProcesses(of: appPID)
-            if let shell = children.last {
-                pm.claudePID = shell.pid
-                pm.isRunning = true
-                processMonitor?.startMonitoring(claudePID: shell.pid)
-            }
+        // Use SwiftTerm's shellPid directly — reliable, no guessing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            [weak terminalView, weak processManager, weak processMonitor] in
+            guard let tv = terminalView, let pm = processManager else { return }
+            let pid = tv.process.shellPid
+            guard pid > 0 else { return }
+            pm.claudePID = pid
+            pm.isRunning = true
+            processMonitor?.startMonitoring(claudePID: pid)
         }
 
         return terminalView
     }
 
     func updateNSView(_ nsView: ClaudyTerminalView, context: Context) {
+        let wasActive = nsView.isActiveTab
         nsView.isActiveTab = isActive
+        if isActive && !wasActive {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 }
 
@@ -99,9 +103,23 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         getTerminal().options.enableSixelReported = false
     }
 
+    // MARK: - Focus management
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if isActiveTab, window != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self, self.isActiveTab else { return }
+                self.window?.makeFirstResponder(self)
+            }
+        }
+    }
+
     // MARK: - Keyboard Shortcuts (Cmd+ only)
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isActiveTab else { return false }
+
         guard event.modifierFlags.contains(.command),
               let chars = event.charactersIgnoringModifiers
         else {
@@ -109,6 +127,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         }
 
         switch chars {
+        case "w": // Intercept Cmd+W to prevent default window close
+            NotificationCenter.default.post(name: .closeTab, object: nil)
+            return true
         case "k" where event.modifierFlags.contains(.shift):
             NotificationCenter.default.post(name: .killOrphanProcesses, object: nil)
             return true
@@ -119,41 +140,40 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             send(txt: "\u{15}")
             return true
         default:
-            break
-        }
-
-        // Cmd+Arrow keys (by keyCode since arrow chars aren't in charactersIgnoringModifiers reliably)
-        switch event.keyCode {
-        case 123: // Cmd+Left → Home (move to beginning of line)
-            send(txt: "\u{01}") // Ctrl+A
-            return true
-        case 124: // Cmd+Right → End (move to end of line)
-            send(txt: "\u{05}") // Ctrl+E
-            return true
-        default:
             return super.performKeyEquivalent(with: event)
         }
     }
 
-    // MARK: - Key Monitor (Option+Delete only — no kitty protocol injection)
+    // MARK: - Key Monitor
 
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isActiveTab else { return event }
 
+            let flags = event.modifierFlags
+
+            // Cmd+Arrow keys → Home/End
+            if flags.contains(.command), !flags.contains(.shift), !flags.contains(.option) {
+                if event.keyCode == 123 { // Cmd+Left → Home (Ctrl+A)
+                    self.send(txt: "\u{01}")
+                    return nil
+                }
+                if event.keyCode == 124 { // Cmd+Right → End (Ctrl+E)
+                    self.send(txt: "\u{05}")
+                    return nil
+                }
+            }
+
             // Shift+Enter → newline (not submit)
-            // SwiftTerm has a bug: doCommand calls sendKittyFunctionalKey(.enter)
-            // without modifiers, so Shift+Enter is indistinguishable from Enter.
-            // We intercept and send the correct kitty sequence.
-            if event.keyCode == 36, event.modifierFlags.contains(.shift),
-               !event.modifierFlags.contains(.command) {
+            if event.keyCode == 36, flags.contains(.shift),
+               !flags.contains(.command) {
                 self.send(txt: "\u{1B}[13;2u")
                 return nil
             }
 
             // Option+Delete → delete word backward (Ctrl+W)
-            if event.keyCode == 51, event.modifierFlags.contains(.option),
-               !event.modifierFlags.contains(.command) {
+            if event.keyCode == 51, flags.contains(.option),
+               !flags.contains(.command) {
                 self.send(txt: "\u{17}")
                 return nil
             }

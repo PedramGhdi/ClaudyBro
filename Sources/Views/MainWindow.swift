@@ -4,15 +4,7 @@ import SwiftUI
 struct MainWindow: View {
     @StateObject private var tabManager = TabManager()
     @State private var showSettings = false
-
-    private var windowTitle: String {
-        guard let tab = tabManager.activeTab else { return "ClaudyBro" }
-        let dir = tab.processMonitor.currentDirectory
-        guard !dir.isEmpty else { return "ClaudyBro" }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let abbreviated = dir.hasPrefix(home) ? "~" + dir.dropFirst(home.count) : dir
-        return abbreviated
-    }
+    @State private var windowTitle: String = "ClaudyBro"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,7 +15,7 @@ struct MainWindow: View {
             if let tab = tabManager.activeTab {
                 LaunchToolbar(
                     claudeFound: tab.processManager.claudeFound,
-                    currentPath: tab.processMonitor.currentDirectory
+                    processMonitor: tab.processMonitor
                 )
             }
 
@@ -64,6 +56,24 @@ struct MainWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: .previousTab)) { _ in
             tabManager.selectPreviousTab()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .selectTabByIndex)) { notification in
+            if let index = notification.userInfo?["index"] as? Int {
+                tabManager.selectTabByIndex(index)
+            }
+        }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            updateWindowTitle()
+        }
+        .onChange(of: tabManager.activeTabId) { _ in updateWindowTitle() }
+    }
+
+    private func updateWindowTitle() {
+        guard let tab = tabManager.activeTab else { windowTitle = "ClaudyBro"; return }
+        let dir = tab.processMonitor.currentDirectory
+        guard !dir.isEmpty else { windowTitle = "ClaudyBro"; return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let abbreviated = dir.hasPrefix(home) ? "~" + dir.dropFirst(home.count) : dir
+        if abbreviated != windowTitle { windowTitle = abbreviated }
     }
 }
 
@@ -71,7 +81,7 @@ struct MainWindow: View {
 
 struct LaunchToolbar: View {
     let claudeFound: Bool
-    let currentPath: String
+    @ObservedObject var processMonitor: ProcessMonitor
 
     var body: some View {
         HStack(spacing: 8) {
@@ -123,6 +133,7 @@ struct LaunchToolbar: View {
     }
 
     private var abbreviatedPath: String {
+        let currentPath = processMonitor.currentDirectory
         guard !currentPath.isEmpty else {
             return claudeFound ? "Claude CLI found" : "Claude CLI not in PATH"
         }

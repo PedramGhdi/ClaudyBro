@@ -148,17 +148,9 @@ final class ProcessMonitor: ObservableObject {
         }
         claudeWasRunning = claudeStillRunning
 
-        // Also get current directory (from deepest child or shell)
-        var cwd = ""
-        for desc in descendants.reversed() {
-            if let dir = ProcessTreeQuery.getProcessCurrentDirectory(pid: desc.pid) {
-                cwd = dir
-                break
-            }
-        }
-        if cwd.isEmpty {
-            cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: claudePID) ?? ""
-        }
+        // Get current directory from the shell process directly
+        // (descendants like MCP servers may have different CWDs)
+        let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: claudePID) ?? ""
 
         DispatchQueue.main.async { [weak self] in
             self?.childProcesses = updated

@@ -29,11 +29,25 @@ final class TabManager: ObservableObject {
         activeTabId = tab.id
     }
 
-    /// Close a tab — shows confirmation if Claude is running.
+    /// Close a tab — shows confirmation if Claude is running or if it's the last tab.
     func requestCloseTab(id: UUID) {
-        guard tabs.count > 1 else { return }
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
 
+        // Last tab: confirm and quit
+        if tabs.count == 1 {
+            let confirmed = showCloseConfirmation(
+                message: "Close ClaudyBro?",
+                info: tab.hasClaudeRunning
+                    ? "Claude is running. Closing will terminate the session."
+                    : "This will close the terminal and quit the app."
+            )
+            if confirmed {
+                NSApplication.shared.terminate(nil)
+            }
+            return
+        }
+
+        // Multiple tabs: confirm only if Claude is running
         if tab.hasClaudeRunning {
             let confirmed = showCloseConfirmation(
                 message: "Claude is running in this tab.",
@@ -84,6 +98,11 @@ final class TabManager: ObservableObject {
         guard tabs.count > 1 else { return }
         let idx = (activeIndex - 1 + tabs.count) % tabs.count
         activeTabId = tabs[idx].id
+    }
+
+    func selectTabByIndex(_ index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        activeTabId = tabs[index].id
     }
 
     // MARK: - Private
