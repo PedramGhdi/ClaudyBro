@@ -20,17 +20,15 @@ struct TerminalViewWrapper: NSViewRepresentable {
             currentDirectory: lastDir
         )
 
-        // One-shot shell PID discovery
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            [weak processManager, weak processMonitor] in
-            guard let pm = processManager else { return }
-            let appPID = ProcessInfo.processInfo.processIdentifier
-            let children = ProcessTreeQuery.getChildProcesses(of: appPID)
-            if let shell = children.last {
-                pm.claudePID = shell.pid
-                pm.isRunning = true
-                processMonitor?.startMonitoring(claudePID: shell.pid)
-            }
+        // Use SwiftTerm's shellPid directly — reliable, no guessing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            [weak terminalView, weak processManager, weak processMonitor] in
+            guard let tv = terminalView, let pm = processManager else { return }
+            let pid = tv.process.shellPid
+            guard pid > 0 else { return }
+            pm.claudePID = pid
+            pm.isRunning = true
+            processMonitor?.startMonitoring(claudePID: pid)
         }
 
         return terminalView
