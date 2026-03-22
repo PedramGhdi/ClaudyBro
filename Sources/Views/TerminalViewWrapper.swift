@@ -129,6 +129,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         }
 
         switch chars {
+        case "w": // Intercept Cmd+W to prevent default window close
+            NotificationCenter.default.post(name: .closeTab, object: nil)
+            return true
         case "k" where event.modifierFlags.contains(.shift):
             NotificationCenter.default.post(name: .killOrphanProcesses, object: nil)
             return true
