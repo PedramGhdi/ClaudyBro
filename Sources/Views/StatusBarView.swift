@@ -7,8 +7,10 @@ struct StatusBarView: View {
 
     @State private var showOrphanPanel = false
     @State private var showChildPanel = false
+    @State private var tick = Date()
 
     private let textColor = Color(nsColor: Constants.statusTextColor)
+    private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 12) {
@@ -38,6 +40,7 @@ struct StatusBarView: View {
         .padding(.vertical, 4)
         .frame(height: 24)
         .background(Color(nsColor: Constants.statusBarBackground))
+        .onReceive(countdownTimer) { tick = $0 }
     }
 
     // MARK: - Orphan Badge (clickable → opens detail panel)
@@ -45,16 +48,24 @@ struct StatusBarView: View {
     private var orphanBadge: some View {
         let count = processMonitor.orphanedProcesses.count
         let mem = orphanMemory
+        let timeout = processMonitor.autoKillTimeout
+        let nearest = nearestAutoKillCountdown
 
         return Button(action: { showOrphanPanel.toggle() }) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(Color(nsColor: Constants.warningColor))
+                    .foregroundColor(orphanBadgeColor)
 
                 Text("\(count) orphaned (\(mem))")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color(nsColor: Constants.warningColor))
+                    .foregroundColor(orphanBadgeColor)
+
+                if timeout > 0, let countdown = nearest {
+                    Text(countdown)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(orphanBadgeColor)
+                }
             }
         }
         .buttonStyle(.plain)
@@ -65,6 +76,30 @@ struct StatusBarView: View {
                 isPresented: $showOrphanPanel
             )
         }
+    }
+
+    private var orphanBadgeColor: Color {
+        let timeout = processMonitor.autoKillTimeout
+        guard timeout > 0 else { return Color(nsColor: Constants.warningColor) }
+        let minCountdown = processMonitor.orphanedProcesses
+            .compactMap(\.confirmedOrphanSince)
+            .map { timeout - Date().timeIntervalSince($0) }
+            .min() ?? timeout
+        if minCountdown < 30 { return .red }
+        return Color(nsColor: Constants.warningColor)
+    }
+
+    private var nearestAutoKillCountdown: String? {
+        let timeout = processMonitor.autoKillTimeout
+        guard timeout > 0 else { return nil }
+        let _ = tick // force re-evaluation on timer
+        let nearest = processMonitor.orphanedProcesses
+            .map { $0.autoKillCountdown(timeout: timeout) }
+            .min() ?? timeout
+        let remaining = Int(nearest)
+        if remaining <= 0 { return "killing..." }
+        if remaining < 60 { return "auto-kill \(remaining)s" }
+        return "auto-kill \(remaining / 60)m \(remaining % 60)s"
     }
 
     private func label(_ text: String) -> some View {
@@ -208,6 +243,9 @@ struct ChildProcessRow: View {
 struct OrphanDetailPanel: View {
     @ObservedObject var processMonitor: ProcessMonitor
     @Binding var isPresented: Bool
+    @State private var tick = Date()
+
+    private let refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -222,6 +260,18 @@ struct OrphanDetailPanel: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+
+            if processMonitor.autoKillTimeout > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 10))
+                    Text("Auto-kill after \(Int(processMonitor.autoKillTimeout))s of orphan status")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
 
             Divider()
 
@@ -239,7 +289,11 @@ struct OrphanDetailPanel: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(processMonitor.orphanedProcesses) { process in
-                            OrphanProcessRow(process: process) {
+                            OrphanProcessRow(
+                                process: process,
+                                autoKillTimeout: processMonitor.autoKillTimeout,
+                                tick: tick
+                            ) {
                                 processMonitor.killProcess(process.pid)
                             }
                             Divider().padding(.leading, 40)
@@ -287,6 +341,7 @@ struct OrphanDetailPanel: View {
             .padding(.vertical, 8)
         }
         .frame(width: 380)
+        .onReceive(refreshTimer) { tick = $0 }
     }
 
     private var totalMemoryText: String {
@@ -300,6 +355,8 @@ struct OrphanDetailPanel: View {
 
 struct OrphanProcessRow: View {
     let process: TrackedProcess
+    let autoKillTimeout: TimeInterval
+    let tick: Date
     let onKill: () -> Void
 
     var body: some View {
@@ -331,6 +388,13 @@ struct OrphanProcessRow: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(Color(nsColor: Constants.warningColor))
                 }
+
+                if autoKillTimeout > 0 {
+                    let _ = tick // force re-evaluation
+                    Text(process.formattedAutoKillCountdown(timeout: autoKillTimeout))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(countdownColor)
+                }
             }
 
             Spacer()
@@ -347,6 +411,13 @@ struct OrphanProcessRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    private var countdownColor: Color {
+        let remaining = process.autoKillCountdown(timeout: autoKillTimeout)
+        if remaining < 30 { return .red }
+        if remaining < 60 { return .orange }
+        return .secondary
     }
 
     private var iconName: String {
