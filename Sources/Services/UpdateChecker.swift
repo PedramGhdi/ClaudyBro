@@ -6,7 +6,7 @@ final class UpdateChecker {
     static let shared = UpdateChecker()
 
     /// Set this to your GitHub repo (e.g., "username/ClaudyBro")
-    var githubRepo: String = "PedramGlobiance/ClaudyBro"
+    var githubRepo: String = "PedramGhdi/ClaudyBro"
 
     private let currentVersion: String = {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
