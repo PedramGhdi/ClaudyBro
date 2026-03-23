@@ -32,7 +32,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Process inspector** — Click the child process count in the status bar to see every process Claude has spawned — name, PID, memory usage, and whether it's an MCP server. No more guessing what's running.
 
-- **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually or in bulk from the orphan detail panel.
+- **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually, in bulk, or just wait — orphans are automatically killed after 2 minutes with a live countdown in the status bar.
 
 - **Smart MCP cleanup** — Duplicate MCP servers are automatically killed (keeps the newest instance). When Claude exits, all remaining MCP servers are terminated automatically — no more leftover node processes eating memory.
 
@@ -49,13 +49,14 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **File drop** | Drag PNG/JPG/PDF/SVG onto the terminal to inject file paths |
 | **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, directory in tab title |
 | **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
-| **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time |
+| **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
+| **Auto-kill orphans** | Orphaned processes are automatically killed after 2 minutes (configurable) with live countdown |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
 | **Claude launcher** | Toolbar buttons for `claude` and `claude --dangerously-skip-permissions` |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
 | **Theme** | Dark theme matching Claude Code's aesthetic |
-| **Settings** | Font size, claude binary path, orphan timeout, auto-cleanup toggle |
+| **Settings** | Font size, claude binary path, orphan timeout, auto-kill timeout |
 
 ## Keyboard Shortcuts
 
@@ -143,9 +144,9 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "fontSize": 13,
   "claudePath": "auto",
   "theme": "dark",
-  "autoCleanOrphans": false,
   "orphanTimeoutSeconds": 30,
-  "processMonitorInterval": 5
+  "processMonitorInterval": 5,
+  "autoKillTimeoutSeconds": 120
 }
 ```
 

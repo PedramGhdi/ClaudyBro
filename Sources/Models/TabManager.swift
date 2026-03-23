@@ -123,7 +123,16 @@ final class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     @Published var title: String = "Shell"
     let processManager = ClaudeProcessManager()
-    let processMonitor = ProcessMonitor()
+    let processMonitor: ProcessMonitor
+
+    init() {
+        let monitor = ProcessMonitor()
+        let config = AppConfiguration.shared
+        monitor.monitorInterval = TimeInterval(config.processMonitorInterval)
+        monitor.orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
+        monitor.autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
+        self.processMonitor = monitor
+    }
 
     /// Check if a "claude" process is running in this tab's process tree.
     var hasClaudeRunning: Bool {

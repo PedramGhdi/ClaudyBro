@@ -2,6 +2,19 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.2.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.2.0) — Auto-Kill Orphaned Processes
+
+### New Features
+- Orphaned processes are now automatically killed after 2 minutes of confirmed orphan status
+- Countdown timer displayed in the status bar orphan badge (e.g., "auto-kill 1m 23s")
+- Per-process countdown in the orphan detail panel with color progression (normal → orange → red)
+- Configurable auto-kill timeout via Settings or `~/.config/claudybro/config.json` (`autoKillTimeoutSeconds`, default 120s, set to 0 to disable)
+
+### Improvements
+- Replaced boolean `autoCleanOrphans` toggle with smarter timed auto-kill approach
+- Orphan detail panel now shows auto-kill policy info in header
+- Settings panel shows auto-kill timeout stepper (0–600s range)
+
 ## [v1.1.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.1.0) — Tab System Overhaul
 
 ### New Features

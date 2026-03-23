@@ -176,7 +176,8 @@ struct SettingsSheet: View {
                 }
             }
             Section("Process Monitor") {
-                Toggle("Auto-clean orphaned processes", isOn: $config.autoCleanOrphans)
+                Stepper("Auto-kill orphans after: \(config.autoKillTimeoutSeconds)s",
+                        value: $config.autoKillTimeoutSeconds, in: 0...600, step: 10)
                 Stepper("Orphan timeout: \(config.orphanTimeoutSeconds)s",
                         value: $config.orphanTimeoutSeconds, in: 5...300, step: 5)
                 Stepper("Monitor interval: \(config.processMonitorInterval)s",

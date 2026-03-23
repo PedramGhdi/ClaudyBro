@@ -10,7 +10,7 @@ final class ProcessMonitor: ObservableObject {
 
     var monitorInterval: TimeInterval = 5
     var orphanTimeout: TimeInterval = 30
-    var autoCleanup: Bool = false
+    var autoKillTimeout: TimeInterval = 120
 
     var hasActiveProcesses: Bool { !childProcesses.isEmpty }
 
@@ -106,6 +106,7 @@ final class ProcessMonitor: ObservableObject {
                     tracked.idlePollCount = 0
                     tracked.isOrphanCandidate = false
                     tracked.orphanSince = nil
+                    tracked.confirmedOrphanSince = nil
                 }
 
                 if tracked.idlePollCount >= 2 {
@@ -117,6 +118,9 @@ final class ProcessMonitor: ObservableObject {
                     if let since = tracked.orphanSince,
                        Date().timeIntervalSince(since) >= orphanTimeout
                     {
+                        if tracked.confirmedOrphanSince == nil {
+                            tracked.confirmedOrphanSince = Date()
+                        }
                         orphans.append(tracked)
                     }
                 }
@@ -148,6 +152,28 @@ final class ProcessMonitor: ObservableObject {
         }
         claudeWasRunning = claudeStillRunning
 
+        // Auto-kill orphans that exceeded the auto-kill timeout
+        var autoKilled: [pid_t] = []
+        if autoKillTimeout > 0 {
+            for orphan in orphans {
+                if let since = orphan.confirmedOrphanSince,
+                   Date().timeIntervalSince(since) >= autoKillTimeout
+                {
+                    kill(orphan.pid, SIGTERM)
+                    autoKilled.append(orphan.pid)
+                }
+            }
+            if !autoKilled.isEmpty {
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                    for pid in autoKilled {
+                        if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
+                    }
+                }
+                orphans.removeAll { autoKilled.contains($0.pid) }
+                updated.removeAll { autoKilled.contains($0.pid) }
+            }
+        }
+
         // Get current directory from the shell process directly
         // (descendants like MCP servers may have different CWDs)
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: claudePID) ?? ""
@@ -156,10 +182,6 @@ final class ProcessMonitor: ObservableObject {
             self?.childProcesses = updated
             self?.orphanedProcesses = orphans
             if cwd != self?.currentDirectory { self?.currentDirectory = cwd }
-
-            if self?.autoCleanup == true, !orphans.isEmpty {
-                self?.cleanupOrphans()
-            }
         }
     }
 

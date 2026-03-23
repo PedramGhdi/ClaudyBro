@@ -18,6 +18,7 @@ struct TrackedProcess: Identifiable {
     var idlePollCount: Int = 0
     var isOrphanCandidate: Bool = false
     var orphanSince: Date?
+    var confirmedOrphanSince: Date?
     var memoryBytes: UInt64 = 0
 
     var formattedMemory: String {
@@ -38,5 +39,17 @@ struct TrackedProcess: Identifiable {
         if seconds < 60 { return "\(seconds)s idle" }
         let minutes = seconds / 60
         return "\(minutes)m \(seconds % 60)s idle"
+    }
+
+    func autoKillCountdown(timeout: TimeInterval) -> TimeInterval {
+        guard let since = confirmedOrphanSince else { return timeout }
+        return max(0, timeout - Date().timeIntervalSince(since))
+    }
+
+    func formattedAutoKillCountdown(timeout: TimeInterval) -> String {
+        let remaining = Int(autoKillCountdown(timeout: timeout))
+        if remaining <= 0 { return "killing..." }
+        if remaining < 60 { return "auto-kill in \(remaining)s" }
+        return "auto-kill in \(remaining / 60)m \(remaining % 60)s"
     }
 }
