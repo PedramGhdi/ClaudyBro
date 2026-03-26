@@ -149,6 +149,15 @@ final class ProcessMonitor: ObservableObject {
                     if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
                 }
             }
+
+            // Notify terminal view to reset modes (Kitty keyboard, bracketed paste, etc.)
+            let shellPid = self.claudePID
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .claudeProcessExited, object: nil,
+                    userInfo: ["shellPid": shellPid]
+                )
+            }
         }
         claudeWasRunning = claudeStillRunning
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 APP_NAME="ClaudyBro"
 APP_DIR="build/$APP_NAME.app"
 DMG_DIR="build/dmg"
@@ -26,6 +26,7 @@ build)
 
     cp "$BIN_PATH/$APP_NAME" "$APP_DIR/Contents/MacOS/"
     cp Resources/Info.plist "$APP_DIR/Contents/"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist"
     cp Resources/AppIcon.icns "$APP_DIR/Contents/Resources/"
 
     # Use developer identity if available (TCC remembers permissions),
