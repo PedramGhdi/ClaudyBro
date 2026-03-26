@@ -1,0 +1,62 @@
+diff --git a/Sources/SwiftTerm/SelectionService.swift b/Sources/SwiftTerm/SelectionService.swift
+index 227309f..29e7dd1 100644
+--- a/Sources/SwiftTerm/SelectionService.swift
++++ b/Sources/SwiftTerm/SelectionService.swift
+@@ -271,13 +271,24 @@ class SelectionService: CustomDebugStringConvertible {
+      */
+     public func dragExtend (bufferPosition: Position) {
+         var adjustedEnd = bufferPosition
+-        
++
+         // If we're in word selection mode, extend to word boundaries
+         if selectionMode == .word {
+-            let direction = Position.compare(bufferPosition, start) == .before ? -1 : 1
++            let draggingBefore = Position.compare(bufferPosition, start) == .before
++            let direction = draggingBefore ? -1 : 1
+             adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
++
++            // Pivot: when dragging backward past the original word, flip start
++            // to the end of the original word so the original word stays selected.
++            if draggingBefore, let p = pivot {
++                start = p
++            } else if !draggingBefore, let p = pivot {
++                // Dragging forward again — restore start to original word start
++                let wordStart = extendToWordBoundary(position: p, in: terminal.displayBuffer, direction: -1)
++                start = wordStart
++            }
+         }
+-        
++
+         end = adjustedEnd
+         setActiveAndNotify()
+     }
+@@ -450,7 +461,7 @@ class SelectionService: CustomDebugStringConvertible {
+         case " ":
+             includeFunc = { ch in ch == " " }
+         case let ch where ch.isLetter || ch.isNumber:
+-            includeFunc = { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" }
++            includeFunc = { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" || ch == "@" || ch == "+" || ch == "~" }
+         default:
+             return position
+         }
+@@ -500,7 +511,7 @@ class SelectionService: CustomDebugStringConvertible {
+             // Select all white space
+             simpleScanSelection (from: position, in: buffer) { ch in ch == " " }
+         case let ch where ch.isLetter || ch.isNumber:
+-            simpleScanSelection (from: position, in: buffer) { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" }
++            simpleScanSelection (from: position, in: buffer) { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" || ch == "@" || ch == "+" || ch == "~" }
+         case "{":
+             fallthrough
+         case "(":
+@@ -519,9 +530,10 @@ class SelectionService: CustomDebugStringConvertible {
+             end = position
+         }
+         selectionMode = .word
++        pivot = end  // Remember word end for drag pivot
+         setActiveAndNotify()
+     }
+-    
++
+     /**
+      * Clears the selection
+      */
