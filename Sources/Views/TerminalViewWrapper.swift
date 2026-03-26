@@ -122,6 +122,42 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         }
     }
 
+    // MARK: - Scroll Position Preservation
+
+    private var suppressScrollerUpdate = false
+
+    /// Suppress scroller updates while we restore scroll position to prevent flicker.
+    override func scrolled(source: Terminal, yDisp: Int) {
+        guard !suppressScrollerUpdate else { return }
+        super.scrolled(source: source, yDisp: yDisp)
+    }
+
+    /// Preserve scroll position and text selection while new output streams in.
+    /// SwiftTerm's macOS backend never sets `userScrolling`, so Terminal always
+    /// snaps yDisp to yBase on new output. We save/restore yDisp around feed.
+    /// Also prevents feedPrepare() from clearing active text selection.
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        let wasScrolledUp = canScroll && scrollPosition < 1.0
+        let savedYDisp = getTerminal().buffer.yDisp
+
+        // Prevent feedPrepare() from clearing text selection during output
+        let savedMouseReporting = allowMouseReporting
+        allowMouseReporting = false
+
+        if wasScrolledUp { suppressScrollerUpdate = true }
+
+        super.dataReceived(slice: slice)
+
+        allowMouseReporting = savedMouseReporting
+
+        if wasScrolledUp {
+            getTerminal().buffer.yDisp = savedYDisp
+            suppressScrollerUpdate = false
+            // Trigger scroller update with restored position
+            super.scrolled(source: getTerminal(), yDisp: savedYDisp)
+        }
+    }
+
     func configureAppearance() {
         let config = AppConfiguration.shared
         font = NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
@@ -175,10 +211,41 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
 
     // MARK: - Key Monitor
 
+    // macOS keyCodes for arrow/navigation keys that macOS erroneously marks with .numericPad
+    private static let functionKeyCodes: Set<UInt16> = [
+        123, 124, 125, 126,  // Left, Right, Down, Up
+        115, 119, 116, 121,  // Home, End, PageUp, PageDown
+        117,                  // Forward Delete
+    ]
+
+    /// Strip .numericPad from navigation keys so SwiftTerm encodes them as regular arrows
+    /// (CSI A/B/C/D) instead of keypad variants (CSI 57419-57424 u) in Kitty keyboard mode.
+    private static func fixNumericPadFlag(_ event: NSEvent) -> NSEvent {
+        guard functionKeyCodes.contains(event.keyCode),
+              event.modifierFlags.contains(.numericPad)
+        else { return event }
+
+        return NSEvent.keyEvent(
+            with: event.type,
+            location: event.locationInWindow,
+            modifierFlags: event.modifierFlags.subtracting(.numericPad),
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            characters: event.characters ?? "",
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+            isARepeat: event.isARepeat,
+            keyCode: event.keyCode
+        ) ?? event
+    }
+
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isActiveTab else { return event }
 
+            // Fix macOS quirk: regular arrow/nav keys have .numericPad flag, causing
+            // SwiftTerm to encode them as keypad variants in Kitty keyboard protocol.
+            let event = Self.fixNumericPadFlag(event)
             let flags = event.modifierFlags
 
             // Cmd+Arrow keys → Home/End

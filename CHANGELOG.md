@@ -2,6 +2,20 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.3.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.3.0) — Kitty Keyboard, Scroll & Selection Fixes
+
+### Bug Fixes
+- Fixed arrow keys producing raw escape sequences (`[57420u`) inside Claude Code's TUI (e.g., `/resume` session picker, search dialogs)
+  - Root cause: macOS marks regular arrow keys with `.numericPad` flag, causing SwiftTerm to encode them as keypad variants instead of standard arrows
+- Fixed arrow keys showing raw escape sequences after exiting Claude Code with Ctrl+C
+  - Terminal now resets Kitty keyboard protocol, bracketed paste mode, and application cursor mode on Claude exit
+- Fixed terminal auto-scrolling to bottom when new output arrives while user is reading scrollback
+  - Terminal now preserves scroll position when user has scrolled up, matching Ghostty's behavior
+  - Scroll bar no longer flickers when output streams in while scrolled up
+- Fixed text selection being cleared when Claude sends new output — you can now highlight text while Claude is responding
+- Fixed double-click drag selection dropping the original word when dragging backward
+- Double-click word selection now includes `@`, `+`, `~` characters — selecting emails like `user@example.com` works with a single double-click
+
 ## [v1.2.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.2.1) — Fix Arrow Keys After Ctrl+C
 
 ### Bug Fixes

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.2.1"
+VERSION="1.3.0"
 APP_NAME="ClaudyBro"
 APP_DIR="build/$APP_NAME.app"
 DMG_DIR="build/dmg"
@@ -14,6 +14,12 @@ build)
     echo "=== Building $APP_NAME v$VERSION ==="
 
     swift package resolve
+
+    # Patch SwiftTerm: word selection improvements (email chars, drag pivot)
+    if [ -d ".build/checkouts/SwiftTerm" ] && [ -f "patches/swiftterm-selection.patch" ]; then
+        git -C .build/checkouts/SwiftTerm apply ../../../patches/swiftterm-selection.patch 2>/dev/null || true
+    fi
+
     swift build -c release \
         -Xswiftc -O \
         -Xswiftc -whole-module-optimization
