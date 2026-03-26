@@ -43,4 +43,5 @@ enum Constants {
 extension Notification.Name {
     static let killOrphanProcesses = Notification.Name("com.claudybro.killOrphans")
     static let sendTerminalCommand = Notification.Name("com.claudybro.sendCommand")
+    static let claudeProcessExited = Notification.Name("com.claudybro.claudeExited")
 }

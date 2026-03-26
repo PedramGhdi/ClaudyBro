@@ -63,6 +63,10 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             self, selector: #selector(saveWorkingDirectory),
             name: NSApplication.willTerminateNotification, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleClaudeExited(_:)),
+            name: .claudeProcessExited, object: nil
+        )
 
         installKeyMonitor()
     }
@@ -80,6 +84,31 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     @objc private func handleTerminalCommand(_ notification: Notification) {
         guard isActiveTab, let cmd = notification.userInfo?["command"] as? String else { return }
         send(txt: cmd)
+    }
+
+    /// Reset terminal modes that Claude Code may have enabled but not cleaned up (e.g., Ctrl+C exit).
+    @objc private func handleClaudeExited(_ notification: Notification) {
+        guard let shellPid = notification.userInfo?["shellPid"] as? pid_t,
+              shellPid == self.process?.shellPid,
+              shellPid > 0
+        else { return }
+
+        let terminal = getTerminal()
+
+        // Pop all Kitty keyboard protocol levels — prevents raw escape sequences for arrow keys
+        if terminal.keyboardEnhancementFlags != [] {
+            feed(text: "\u{1b}[<99u")
+        }
+
+        // Disable bracketed paste mode
+        if terminal.bracketedPasteMode {
+            feed(text: "\u{1b}[?2004l")
+        }
+
+        // Disable application cursor mode
+        if terminal.applicationCursor {
+            feed(text: "\u{1b}[?1l")
+        }
     }
 
     @objc private func saveWorkingDirectory() {

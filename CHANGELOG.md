@@ -2,6 +2,13 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.2.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.2.1) — Fix Arrow Keys After Ctrl+C
+
+### Bug Fixes
+- Fixed arrow keys showing raw escape sequences (`[57420u[57419u`) after exiting Claude Code with Ctrl+C
+- Terminal now automatically resets Kitty keyboard protocol, bracketed paste mode, and application cursor mode when Claude exits unexpectedly
+- Fix applies per-tab — background tabs with Claude running are also cleaned up correctly
+
 ## [v1.2.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.2.0) — Auto-Kill Orphaned Processes
 
 ### New Features
