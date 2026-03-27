@@ -78,7 +78,7 @@ struct ClaudyBroApp: App {
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Shared reference set by MainWindow so we can check for running Claude sessions.
+    /// Shared reference set by MainWindow so we can check for running CLI sessions.
     static weak var tabManager: TabManager?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -86,8 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Confirm quit if Claude is running in any tab
-        if let tabManager = Self.tabManager, tabManager.hasAnyClaudeRunning {
+        // Always confirm before quitting to prevent accidental closure
+        if let tabManager = Self.tabManager {
             if !tabManager.confirmQuitIfNeeded() {
                 return .terminateCancel
             }

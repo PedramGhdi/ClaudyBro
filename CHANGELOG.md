@@ -2,6 +2,27 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.4.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.4.0) — Multi-CLI Support
+
+### New Features
+- **Multi-CLI support** — ClaudyBro now supports Claude, Gemini CLI, and OpenAI Codex CLI as first-class citizens
+- **Auto-detection** — All installed AI CLIs are discovered at startup by scanning known paths and `$PATH`
+- **Split-button launcher** — Compact VS Code-style toolbar button: one-click to run the default CLI, dropdown chevron for all options including dangerous-mode variants (Skip Permissions, Full Auto)
+- **npx fallback** — CLIs not installed globally can be launched via npx when available
+- **Per-CLI branding** — Each CLI gets its own icon and color in the process inspector and status bar (Claude = brain/blue, Gemini = sparkles/blue, Codex = terminal/green)
+- **Extensible architecture** — Adding a new CLI requires only adding one enum case to `CLIProvider.swift`
+
+### Improvements
+- **Always-confirm dialogs** — Tab close (Cmd+W), last-tab close, and app quit (Cmd+Q) now always show a confirmation dialog to prevent accidental closure, regardless of whether a CLI is running
+- **Dynamic confirmation messages** — Dialogs show the specific CLI name when one is running (e.g., "Claude is running. Closing will terminate the session.")
+- **Multi-CLI settings** — Settings panel now shows binary path overrides for all supported CLIs
+- **Generic process monitoring** — Process monitor detects exit of any supported CLI and cleans up MCP servers accordingly
+
+### Architecture
+- Renamed `ClaudeProcessManager` to `CLIProcessManager` with multi-provider discovery
+- New `CLIProvider` enum centralizes all CLI-specific data (binary names, search paths, commands, colors, icons)
+- Configuration backward compatible — existing `claudePath` setting preserved, new `geminiPath`/`codexPath` default to "auto"
+
 ## [v1.3.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.3.0) — Kitty Keyboard, Scroll & Selection Fixes
 
 ### Bug Fixes

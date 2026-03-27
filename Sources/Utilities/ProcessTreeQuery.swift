@@ -137,8 +137,10 @@ enum ProcessTreeQuery {
         if joined.contains("eslint") { return "ESLint Process" }
         if joined.contains("prettier") { return "Prettier Process" }
 
-        // Claude
-        if joined.contains("claude") { return "Claude Code" }
+        // AI CLI tools
+        for provider in CLIProvider.allCases {
+            if joined.contains(provider.processKeyword) { return provider.processDescription }
+        }
 
         // npm
         if joined.contains("npm") { return "npm Process" }
