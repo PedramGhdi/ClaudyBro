@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-/// Monitors the child process tree of the Claude CLI process.
+/// Monitors the child process tree of the shell process.
 /// Detects truly orphaned node processes while excluding legitimate MCP servers.
 final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
@@ -15,8 +15,8 @@ final class ProcessMonitor: ObservableObject {
     var hasActiveProcesses: Bool { !childProcesses.isEmpty }
 
     private var timer: Timer?
-    private var claudePID: pid_t = 0
-    private var claudeWasRunning: Bool = false
+    private var shellPID: pid_t = 0
+    private var cliWasRunning: Bool = false
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -28,8 +28,8 @@ final class ProcessMonitor: ObservableObject {
 
     deinit { stopMonitoring() }
 
-    func startMonitoring(claudePID pid: pid_t) {
-        claudePID = pid
+    func startMonitoring(shellPID pid: pid_t) {
+        shellPID = pid
         timer?.invalidate()
         // Poll on background queue to avoid main-thread memory pressure
         timer = Timer.scheduledTimer(
@@ -79,9 +79,9 @@ final class ProcessMonitor: ObservableObject {
     // MARK: - Private
 
     private func poll() {
-        guard claudePID > 0 else { return }
+        guard shellPID > 0 else { return }
 
-        let descendants = ProcessTreeQuery.getDescendantProcesses(of: claudePID)
+        let descendants = ProcessTreeQuery.getDescendantProcesses(of: shellPID)
         var updated: [TrackedProcess] = []
         var orphans: [TrackedProcess] = []
 
@@ -136,11 +136,13 @@ final class ProcessMonitor: ObservableObject {
             updated.removeAll { $0.pid == pid }
         }
 
-        // Detect Claude exit — if Claude was running but no claude process remains, kill MCP servers
-        let claudeStillRunning = updated.contains {
-            $0.processDescription.lowercased().contains("claude")
+        // Detect CLI exit — if any CLI was running but no CLI process remains, kill MCP servers
+        let cliKeywords = CLIProvider.allCases.map(\.processKeyword)
+        let cliStillRunning = updated.contains { proc in
+            let desc = proc.processDescription.lowercased()
+            return cliKeywords.contains { desc.contains($0) }
         }
-        if claudeWasRunning && !claudeStillRunning && !updated.isEmpty {
+        if cliWasRunning && !cliStillRunning && !updated.isEmpty {
             let mcpPids = updated.filter(\.isMCPServer).map(\.pid)
             for pid in mcpPids { kill(pid, SIGTERM) }
             updated.removeAll { $0.isMCPServer }
@@ -151,15 +153,15 @@ final class ProcessMonitor: ObservableObject {
             }
 
             // Notify terminal view to reset modes (Kitty keyboard, bracketed paste, etc.)
-            let shellPid = self.claudePID
+            let shellPid = self.shellPID
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
-                    name: .claudeProcessExited, object: nil,
+                    name: .cliProcessExited, object: nil,
                     userInfo: ["shellPid": shellPid]
                 )
             }
         }
-        claudeWasRunning = claudeStillRunning
+        cliWasRunning = cliStillRunning
 
         // Auto-kill orphans that exceeded the auto-kill timeout
         var autoKilled: [pid_t] = []
@@ -185,7 +187,7 @@ final class ProcessMonitor: ObservableObject {
 
         // Get current directory from the shell process directly
         // (descendants like MCP servers may have different CWDs)
-        let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: claudePID) ?? ""
+        let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
         DispatchQueue.main.async { [weak self] in
             self?.childProcesses = updated

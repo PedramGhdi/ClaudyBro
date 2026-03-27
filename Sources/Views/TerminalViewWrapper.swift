@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Bridges SwiftTerm's LocalProcessTerminalView into SwiftUI.
 struct TerminalViewWrapper: NSViewRepresentable {
-    @ObservedObject var processManager: ClaudeProcessManager
+    @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
     var isActive: Bool
 
@@ -26,9 +26,9 @@ struct TerminalViewWrapper: NSViewRepresentable {
             guard let tv = terminalView, let pm = processManager else { return }
             let pid = tv.process.shellPid
             guard pid > 0 else { return }
-            pm.claudePID = pid
+            pm.shellPID = pid
             pm.isRunning = true
-            processMonitor?.startMonitoring(claudePID: pid)
+            processMonitor?.startMonitoring(shellPID: pid)
         }
 
         return terminalView
@@ -64,8 +64,8 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             name: NSApplication.willTerminateNotification, object: nil
         )
         NotificationCenter.default.addObserver(
-            self, selector: #selector(handleClaudeExited(_:)),
-            name: .claudeProcessExited, object: nil
+            self, selector: #selector(handleCLIExited(_:)),
+            name: .cliProcessExited, object: nil
         )
 
         installKeyMonitor()
@@ -86,8 +86,8 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         send(txt: cmd)
     }
 
-    /// Reset terminal modes that Claude Code may have enabled but not cleaned up (e.g., Ctrl+C exit).
-    @objc private func handleClaudeExited(_ notification: Notification) {
+    /// Reset terminal modes that AI CLIs may have enabled but not cleaned up (e.g., Ctrl+C exit).
+    @objc private func handleCLIExited(_ notification: Notification) {
         guard let shellPid = notification.userInfo?["shellPid"] as? pid_t,
               shellPid == self.process?.shellPid,
               shellPid > 0

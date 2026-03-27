@@ -1,6 +1,6 @@
 # ClaudyBro
 
-A lightweight, purpose-built macOS terminal for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Native Swift app with smart process management, image paste support, and a fraction of the footprint of general-purpose terminals.
+A lightweight, purpose-built macOS terminal for AI coding CLIs — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/anthropics/claude-code), and [OpenAI Codex CLI](https://github.com/openai/codex). Native Swift app with smart process management, image paste support, and a fraction of the footprint of general-purpose terminals.
 
 ![ClaudyBro Screenshot](https://img.shields.io/badge/macOS-13.0+-blue) ![Swift](https://img.shields.io/badge/Swift-5.9+-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -52,11 +52,11 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
 | **Auto-kill orphans** | Orphaned processes are automatically killed after 2 minutes (configurable) with live countdown |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
-| **Claude launcher** | Toolbar buttons for `claude` and `claude --dangerously-skip-permissions` |
+| **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
 | **Theme** | Dark theme matching Claude Code's aesthetic |
-| **Settings** | Font size, claude binary path, orphan timeout, auto-kill timeout |
+| **Settings** | Font size, CLI binary paths (Claude/Gemini/Codex), orphan timeout, auto-kill timeout |
 
 ## Keyboard Shortcuts
 
@@ -110,14 +110,18 @@ brew install --cask claudybro
 ## Architecture
 
 ```
-ClaudyBro.app (3.4 MB)
+ClaudyBro.app (3.7 MB)
 ├── SwiftUI Shell
 │   ├── TabManager          — Multi-tab terminal sessions
-│   ├── LaunchToolbar       — Claude CLI launcher buttons
+│   ├── LaunchToolbar       — Split-button CLI launcher (Claude/Gemini/Codex)
 │   └── StatusBar           — Process count + orphan alerts
+├── Models
+│   ├── CLIProvider         — Enum defining all supported AI CLIs
+│   └── AppConfiguration    — JSON settings with per-CLI path overrides
 ├── SwiftTerm Bridge
 │   └── ClaudyTerminalView  — Subclass with image paste, drag-drop, shortcuts
 ├── Services
+│   ├── CLIProcessManager   — Multi-CLI discovery and shell state tracking
 │   ├── ProcessMonitor      — Child process tree tracking (sysctl, not ps)
 │   ├── ImagePasteHandler   — NSPasteboard → temp PNG → path injection
 │   └── UpdateChecker       — GitHub Releases version check
@@ -127,7 +131,7 @@ ClaudyBro.app (3.4 MB)
 
 ## How Orphan Detection Works
 
-1. On Claude start, ClaudyBro records the shell PID
+1. On CLI start, ClaudyBro records the shell PID
 2. Every 5 seconds (background thread), it queries all descendant processes via `sysctl`
 3. For each `node` process, it samples CPU time via `proc_pidinfo(PROC_PIDTASKINFO)`
 4. If CPU time hasn't changed for 2+ consecutive polls (~10s), the process is marked as an orphan candidate
@@ -143,6 +147,8 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "font": "SF Mono",
   "fontSize": 13,
   "claudePath": "auto",
+  "geminiPath": "auto",
+  "codexPath": "auto",
   "theme": "dark",
   "orphanTimeoutSeconds": 30,
   "processMonitorInterval": 5,
@@ -154,7 +160,7 @@ Settings are stored at `~/.config/claudybro/config.json`:
 
 - macOS 13.0 (Ventura) or later
 - Apple Silicon or Intel Mac
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed
+- At least one AI CLI installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/anthropics/claude-code), or [OpenAI Codex CLI](https://github.com/openai/codex) (or npx available)
 
 ## Tech Stack
 

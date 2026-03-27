@@ -14,7 +14,7 @@ struct MainWindow: View {
 
             if let tab = tabManager.activeTab {
                 LaunchToolbar(
-                    claudeFound: tab.processManager.claudeFound,
+                    processManager: tab.processManager,
                     processMonitor: tab.processMonitor
                 )
             }
@@ -34,7 +34,7 @@ struct MainWindow: View {
             if let tab = tabManager.activeTab {
                 StatusBarView(
                     processMonitor: tab.processMonitor,
-                    claudePID: tab.processManager.claudePID
+                    shellPID: tab.processManager.shellPID
                 )
             }
         }
@@ -80,16 +80,21 @@ struct MainWindow: View {
 // MARK: - Launch Toolbar
 
 struct LaunchToolbar: View {
-    let claudeFound: Bool
+    @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
+
+    /// The default CLI shown on the primary button (first found, or first overall).
+    private var defaultProvider: CLIProvider? {
+        processManager.foundProviders.first
+            ?? CLIProvider.allCases.first(where: { processManager.npxAvailable && $0.npxPackage != nil })
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(claudeFound ? Color.green : Color.orange)
+                .fill(processManager.anyCLIAvailable ? Color.green : Color.orange)
                 .frame(width: 6, height: 6)
 
-            // Show current directory path (abbreviated)
             Text(abbreviatedPath)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(Color(nsColor: Constants.statusTextColor))
@@ -98,33 +103,67 @@ struct LaunchToolbar: View {
 
             Spacer()
 
-            Button(action: { runClaude(skipPermissions: false) }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "play.fill").font(.system(size: 9))
-                    Text("Run Claude").font(.system(size: 11, weight: .medium, design: .monospaced))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color(nsColor: Constants.accentColor))
-                .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
-            .cursor(.pointingHand)
+            if let provider = defaultProvider {
+                // Split button: [▶ Claude | ▾]
+                HStack(spacing: 0) {
+                    // Primary action — one-click run of default CLI
+                    let isInstalled = processManager.isFound(provider)
+                    Button(action: { runCLI(provider, dangerousMode: false, viaNpx: !isInstalled) }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill").font(.system(size: 9))
+                            Text(provider.displayName)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .cursor(.pointingHand)
 
-            Button(action: { runClaude(skipPermissions: true) }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "bolt.fill").font(.system(size: 9))
-                    Text("Skip Permissions").font(.system(size: 11, weight: .medium, design: .monospaced))
+                    // Divider line
+                    Rectangle()
+                        .fill(Color.white.opacity(0.3))
+                        .frame(width: 1, height: 16)
+
+                    // Dropdown chevron — all CLI options
+                    Menu {
+                        ForEach(availableProviders, id: \.provider.id) { entry in
+                            Section {
+                                // Normal run
+                                Button(action: { runCLI(entry.provider, dangerousMode: false, viaNpx: !entry.isInstalled) }) {
+                                    Label(
+                                        entry.isInstalled ? "Run \(entry.provider.displayName)" : "npx \(entry.provider.displayName)",
+                                        systemImage: entry.provider.iconName
+                                    )
+                                }
+
+                                // Dangerous mode (if applicable and installed)
+                                if entry.isInstalled, let label = entry.provider.dangerousButtonLabel {
+                                    Button(action: { runCLI(entry.provider, dangerousMode: true, viaNpx: false) }) {
+                                        Label("\(entry.provider.displayName) — \(label)", systemImage: "bolt.fill")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 22, height: 22)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(width: 22)
+                    .cursor(.pointingHand)
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.8))
+                .background(Color(nsColor: provider.color))
                 .cornerRadius(4)
+            } else {
+                Text("No AI CLIs detected")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Color(nsColor: Constants.statusTextColor))
             }
-            .buttonStyle(.plain)
-            .cursor(.pointingHand)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -132,10 +171,33 @@ struct LaunchToolbar: View {
         .background(Color(nsColor: Constants.statusBarBackground))
     }
 
+    // MARK: - Helpers
+
+    private struct ProviderEntry {
+        let provider: CLIProvider
+        let isInstalled: Bool
+    }
+
+    private var availableProviders: [ProviderEntry] {
+        CLIProvider.allCases.compactMap { provider in
+            let installed = processManager.isFound(provider)
+            let canNpx = !installed && processManager.npxAvailable && provider.npxPackage != nil
+            guard installed || canNpx else { return nil }
+            return ProviderEntry(provider: provider, isInstalled: installed)
+        }
+    }
+
     private var abbreviatedPath: String {
         let currentPath = processMonitor.currentDirectory
         guard !currentPath.isEmpty else {
-            return claudeFound ? "Claude CLI found" : "Claude CLI not in PATH"
+            let found = processManager.foundProviders
+            if found.isEmpty && !processManager.npxAvailable {
+                return "No AI CLIs detected"
+            }
+            if found.isEmpty {
+                return "AI CLIs available via npx"
+            }
+            return found.map(\.displayName).joined(separator: ", ") + " available"
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if currentPath.hasPrefix(home) {
@@ -144,9 +206,15 @@ struct LaunchToolbar: View {
         return currentPath
     }
 
-    private func runClaude(skipPermissions: Bool) {
-        var command = "claude"
-        if skipPermissions { command += " --dangerously-skip-permissions" }
+    private func runCLI(_ provider: CLIProvider, dangerousMode: Bool, viaNpx: Bool) {
+        var command: String
+        if viaNpx {
+            command = provider.npxLaunchCommand ?? provider.launchCommand
+        } else if dangerousMode {
+            command = provider.dangerousLaunchCommand ?? provider.launchCommand
+        } else {
+            command = provider.launchCommand
+        }
         command += "\n"
         NotificationCenter.default.post(
             name: .sendTerminalCommand, object: nil,
@@ -166,13 +234,18 @@ struct SettingsSheet: View {
             Section("Appearance") {
                 Stepper("Font Size: \(Int(config.fontSize))", value: $config.fontSize, in: 8...32, step: 1)
             }
-            Section("Claude") {
-                HStack {
-                    Text("Binary Path")
-                    Spacer()
-                    TextField("auto", text: $config.claudePath)
+            Section("CLI Paths") {
+                ForEach(CLIProvider.allCases) { provider in
+                    HStack {
+                        Text("\(provider.displayName) Binary")
+                        Spacer()
+                        TextField("auto", text: Binding(
+                            get: { config.cliPath(for: provider) },
+                            set: { config.setCLIPath(for: provider, $0) }
+                        ))
                         .frame(width: 200)
                         .textFieldStyle(.roundedBorder)
+                    }
                 }
             }
             Section("Process Monitor") {

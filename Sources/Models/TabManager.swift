@@ -18,9 +18,9 @@ final class TabManager: ObservableObject {
         tabs.firstIndex { $0.id == activeTabId } ?? 0
     }
 
-    /// True if any tab has Claude running.
-    var hasAnyClaudeRunning: Bool {
-        tabs.contains { $0.hasClaudeRunning }
+    /// True if any tab has an AI CLI running.
+    var hasAnyCLIRunning: Bool {
+        tabs.contains { $0.hasAnyCLIRunning }
     }
 
     func addNewTab() {
@@ -29,16 +29,17 @@ final class TabManager: ObservableObject {
         activeTabId = tab.id
     }
 
-    /// Close a tab — shows confirmation if Claude is running or if it's the last tab.
+    /// Close a tab — always shows confirmation to prevent accidental closure.
     func requestCloseTab(id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
 
         // Last tab: confirm and quit
         if tabs.count == 1 {
+            let cliName = tab.runningCLI?.displayName
             let confirmed = showCloseConfirmation(
                 message: "Close ClaudyBro?",
-                info: tab.hasClaudeRunning
-                    ? "Claude is running. Closing will terminate the session."
+                info: cliName != nil
+                    ? "\(cliName!) is running. Closing will terminate the session."
                     : "This will close the terminal and quit the app."
             )
             if confirmed {
@@ -47,14 +48,18 @@ final class TabManager: ObservableObject {
             return
         }
 
-        // Multiple tabs: confirm only if Claude is running
-        if tab.hasClaudeRunning {
-            let confirmed = showCloseConfirmation(
-                message: "Claude is running in this tab.",
-                info: "Closing will terminate the Claude session. Are you sure?"
-            )
-            guard confirmed else { return }
+        // Multiple tabs: always confirm
+        let info: String
+        if let cli = tab.runningCLI {
+            info = "\(cli.displayName) is running. Closing will terminate the session."
+        } else {
+            info = "This will close the terminal session."
         }
+        let confirmed = showCloseConfirmation(
+            message: "Close this tab?",
+            info: info
+        )
+        guard confirmed else { return }
 
         closeTab(id: id)
     }
@@ -71,16 +76,23 @@ final class TabManager: ObservableObject {
         }
     }
 
-    /// Confirm before quitting the app if Claude is running. Returns true if OK to quit.
+    /// Always confirm before quitting the app. Returns true if OK to quit.
     func confirmQuitIfNeeded() -> Bool {
-        guard hasAnyClaudeRunning else { return true }
+        let tabCount = tabs.count
+        let tabWord = tabCount == 1 ? "tab" : "tabs"
 
-        let runningCount = tabs.filter { $0.hasClaudeRunning }.count
-        let tabWord = runningCount == 1 ? "tab" : "tabs"
+        let info: String
+        if hasAnyCLIRunning {
+            let runningNames = Array(Set(tabs.compactMap(\.runningCLI?.displayName)))
+            let cliList = runningNames.joined(separator: ", ")
+            info = "\(cliList) is running. Quitting will terminate all sessions."
+        } else {
+            info = "This will close \(tabCount) terminal \(tabWord)."
+        }
 
         return showCloseConfirmation(
-            message: "Claude is running in \(runningCount) \(tabWord).",
-            info: "Quitting will terminate all Claude sessions. Are you sure?"
+            message: "Quit ClaudyBro?",
+            info: info
         )
     }
 
@@ -122,7 +134,7 @@ final class TabManager: ObservableObject {
 final class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     @Published var title: String = "Shell"
-    let processManager = ClaudeProcessManager()
+    let processManager = CLIProcessManager()
     let processMonitor: ProcessMonitor
 
     init() {
@@ -134,11 +146,19 @@ final class TerminalTab: Identifiable, ObservableObject {
         self.processMonitor = monitor
     }
 
-    /// Check if a "claude" process is running in this tab's process tree.
-    var hasClaudeRunning: Bool {
-        let pid = processManager.claudePID
-        guard pid > 0 else { return false }
+    /// Check if any AI CLI process is running in this tab's process tree.
+    var hasAnyCLIRunning: Bool { runningCLI != nil }
+
+    /// Which specific CLI is running in this tab (if any).
+    var runningCLI: CLIProvider? {
+        let pid = processManager.shellPID
+        guard pid > 0 else { return nil }
         let descendants = ProcessTreeQuery.getDescendantProcesses(of: pid)
-        return descendants.contains { $0.name.contains("claude") }
+        for provider in CLIProvider.allCases {
+            if descendants.contains(where: { $0.name.contains(provider.processKeyword) }) {
+                return provider
+            }
+        }
+        return nil
     }
 }

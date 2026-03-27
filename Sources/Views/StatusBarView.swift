@@ -3,7 +3,7 @@ import SwiftUI
 /// Bottom status strip with orphan detail popover.
 struct StatusBarView: View {
     @ObservedObject var processMonitor: ProcessMonitor
-    let claudePID: pid_t
+    let shellPID: pid_t
 
     @State private var showOrphanPanel = false
     @State private var showChildPanel = false
@@ -14,8 +14,8 @@ struct StatusBarView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if claudePID > 0 {
-                label("PID \(claudePID)")
+            if shellPID > 0 {
+                label("PID \(shellPID)")
             }
 
             let childCount = processMonitor.childProcesses.count
@@ -221,7 +221,9 @@ struct ChildProcessRow: View {
     private var iconName: String {
         if process.isMCPServer { return "server.rack" }
         let desc = process.processDescription.lowercased()
-        if desc.contains("claude") { return "brain" }
+        for provider in CLIProvider.allCases {
+            if desc.contains(provider.processKeyword) { return provider.iconName }
+        }
         if desc.contains("typescript") || desc.contains("tsserver") { return "chevron.left.forwardslash.chevron.right" }
         if desc.contains("diagnostics") { return "stethoscope" }
         if desc.contains("node") { return "circle.hexagongrid" }
@@ -231,7 +233,9 @@ struct ChildProcessRow: View {
     private var iconColor: Color {
         if process.isMCPServer { return .green }
         let desc = process.processDescription.lowercased()
-        if desc.contains("claude") { return .purple }
+        for provider in CLIProvider.allCases {
+            if desc.contains(provider.processKeyword) { return Color(nsColor: provider.color) }
+        }
         if desc.contains("typescript") { return .blue }
         if desc.contains("diagnostics") { return .orange }
         return .gray

@@ -3,14 +3,6 @@ import AppKit
 enum Constants {
     static let tempDirectory = "/tmp/claudybro"
 
-    static let claudeSearchPaths = [
-        "\(NSHomeDirectory())/.local/bin/claude",
-        "\(NSHomeDirectory())/.claude/bin/claude",
-        "/usr/local/bin/claude",
-        "/opt/homebrew/bin/claude",
-        "/usr/bin/claude",
-    ]
-
     static let defaultShell: String = {
         ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     }()
@@ -43,5 +35,5 @@ enum Constants {
 extension Notification.Name {
     static let killOrphanProcesses = Notification.Name("com.claudybro.killOrphans")
     static let sendTerminalCommand = Notification.Name("com.claudybro.sendCommand")
-    static let claudeProcessExited = Notification.Name("com.claudybro.claudeExited")
+    static let cliProcessExited = Notification.Name("com.claudybro.cliExited")
 }
