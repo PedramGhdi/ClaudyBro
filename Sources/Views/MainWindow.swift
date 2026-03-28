@@ -83,10 +83,24 @@ struct LaunchToolbar: View {
     @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
 
-    /// The default CLI shown on the primary button (first found, or first overall).
+    @ObservedObject private var config = AppConfiguration.shared
+
+    /// The default CLI shown on the primary button (preferred > first found > first npx).
     private var defaultProvider: CLIProvider? {
-        processManager.foundProviders.first
+        if let preferred = config.preferredProvider,
+           processManager.isFound(preferred) || (processManager.npxAvailable && preferred.npxPackage != nil) {
+            return preferred
+        }
+        return processManager.foundProviders.first
             ?? CLIProvider.allCases.first(where: { processManager.npxAvailable && $0.npxPackage != nil })
+    }
+
+    /// Whether the default button should launch in dangerous mode.
+    private var defaultDangerousMode: Bool {
+        guard let preferred = config.preferredProvider,
+              preferred == defaultProvider,
+              processManager.isFound(preferred) else { return false }
+        return config.preferredDangerousMode && preferred.dangerousLaunchCommand != nil
     }
 
     var body: some View {
@@ -106,11 +120,12 @@ struct LaunchToolbar: View {
             if let provider = defaultProvider {
                 // Split button: [▶ Claude | ▾]
                 HStack(spacing: 0) {
-                    // Primary action — one-click run of default CLI
+                    // Primary action — one-click run of preferred CLI + mode
                     let isInstalled = processManager.isFound(provider)
-                    Button(action: { runCLI(provider, dangerousMode: false, viaNpx: !isInstalled) }) {
+                    let useDangerous = defaultDangerousMode
+                    Button(action: { runCLI(provider, dangerousMode: useDangerous, viaNpx: !isInstalled) }) {
                         HStack(spacing: 4) {
-                            Image(systemName: "play.fill").font(.system(size: 9))
+                            Image(systemName: useDangerous ? "bolt.fill" : "play.fill").font(.system(size: 9))
                             Text(provider.displayName)
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                         }
@@ -207,6 +222,11 @@ struct LaunchToolbar: View {
     }
 
     private func runCLI(_ provider: CLIProvider, dangerousMode: Bool, viaNpx: Bool) {
+        // Remember this selection as the new default
+        config.preferredCLI = provider.rawValue
+        config.preferredDangerousMode = dangerousMode
+        config.save()
+
         var command: String
         if viaNpx {
             command = provider.npxLaunchCommand ?? provider.launchCommand
