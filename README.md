@@ -53,6 +53,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Auto-kill orphans** | Orphaned processes are automatically killed after 2 minutes (configurable) with live countdown |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
 | **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
+| **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
 | **Theme** | Dark theme matching Claude Code's aesthetic |
@@ -152,7 +153,9 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "theme": "dark",
   "orphanTimeoutSeconds": 30,
   "processMonitorInterval": 5,
-  "autoKillTimeoutSeconds": 120
+  "autoKillTimeoutSeconds": 120,
+  "preferredCLI": "claude",
+  "preferredDangerousMode": false
 }
 ```
 

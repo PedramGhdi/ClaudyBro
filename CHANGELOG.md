@@ -2,6 +2,18 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.5.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.5.0) — Remember CLI Selection
+
+### New Features
+- **Persistent CLI preference** — The split-button toolbar now remembers your last-used CLI and launch mode across app restarts
+- **Dangerous mode persistence** — If you select "Skip Permissions" or "Full Auto", it becomes the default on next launch
+- **Visual indicator** — Primary button shows a bolt icon when dangerous mode is the saved default
+
+### How It Works
+- Selecting any option from the dropdown saves it as the new default in `~/.config/claudybro/config.json`
+- Two new config keys: `preferredCLI` (provider name) and `preferredDangerousMode` (boolean)
+- Falls back to first detected CLI if the preferred one is no longer available
+
 ## [v1.4.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.4.0) — Multi-CLI Support
 
 ### New Features
