@@ -13,6 +13,12 @@ final class AppConfiguration: ObservableObject {
     @Published var orphanTimeoutSeconds: Int = 30
     @Published var processMonitorInterval: Int = 5
     @Published var autoKillTimeoutSeconds: Int = 120
+    @Published var preferredCLI: String = ""
+    @Published var preferredDangerousMode: Bool = false
+
+    var preferredProvider: CLIProvider? {
+        CLIProvider(rawValue: preferredCLI)
+    }
 
     private init() {
         load()
@@ -32,6 +38,8 @@ final class AppConfiguration: ObservableObject {
             if let v = json["orphanTimeoutSeconds"] as? Int { orphanTimeoutSeconds = v }
             if let v = json["processMonitorInterval"] as? Int { processMonitorInterval = v }
             if let v = json["autoKillTimeoutSeconds"] as? Int { autoKillTimeoutSeconds = v }
+            if let v = json["preferredCLI"] as? String { preferredCLI = v }
+            if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
         } catch {
             // Ignore corrupt config — use defaults
         }
@@ -48,6 +56,8 @@ final class AppConfiguration: ObservableObject {
             "orphanTimeoutSeconds": orphanTimeoutSeconds,
             "processMonitorInterval": processMonitorInterval,
             "autoKillTimeoutSeconds": autoKillTimeoutSeconds,
+            "preferredCLI": preferredCLI,
+            "preferredDangerousMode": preferredDangerousMode,
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
