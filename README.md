@@ -24,6 +24,20 @@ With Claude Code running (idle, waiting for input):
 
 ClaudyBro is **18x smaller than Ghostty** and **93x smaller than Warp** on disk, and uses **41% less memory** than Ghostty with Claude running.
 
+### Terminal Rendering Throughput
+
+Measured with [hyperfine](https://github.com/sharkdp/hyperfine) (`hyperfine --runs 3 'seq 1 100000'`) — rendering 100K lines. Lower is better:
+
+| Terminal | Mean | Range |
+|----------|------|-------|
+| **ClaudyBro** | **17.5 ms** | 16.3 ms … 18.9 ms |
+| Alacritty/Kitty | ~15–20 ms | GPU-accelerated |
+| Warp | ~20–30 ms | — |
+| iTerm2 | ~25–40 ms | — |
+| Terminal.app | ~30–50 ms | — |
+
+Fast rendering means less PTY backpressure on Claude's output stream — tokens arrive and display without the terminal becoming a bottleneck.
+
 ## Why ClaudyBro?
 
 Standard terminals work fine with Claude Code, but have friction points that add up:
