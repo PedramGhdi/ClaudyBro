@@ -45,15 +45,82 @@ struct TerminalViewWrapper: NSViewRepresentable {
     }
 }
 
+// MARK: - LinkSanitizingDelegate
+
+/// Proxy delegate that intercepts `requestOpenLink` to sanitize URLs before opening.
+/// Necessary because the default implementation lives in a protocol extension (static dispatch),
+/// so a subclass of LocalProcessTerminalView cannot override it.
+private final class LinkSanitizingDelegate: TerminalViewDelegate {
+    weak var original: (any TerminalViewDelegate)?
+
+    init(original: any TerminalViewDelegate) {
+        self.original = original
+    }
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        // If link already has a scheme (e.g. https://..., mailto:...), use as-is
+        if trimmed.contains("://") || trimmed.hasPrefix("mailto:") || trimmed.hasPrefix("tel:") {
+            if let url = URL(string: trimmed) {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+
+        // Bare hostname like "github.com/user/repo" → prepend https://
+        if let url = URL(string: "https://" + trimmed) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Forwarded delegate methods
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        original?.send(source: source, data: data)
+    }
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        original?.sizeChanged(source: source, newCols: newCols, newRows: newRows)
+    }
+    func setTerminalTitle(source: TerminalView, title: String) {
+        original?.setTerminalTitle(source: source, title: title)
+    }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        original?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+    func scrolled(source: TerminalView, position: Double) {
+        original?.scrolled(source: source, position: position)
+    }
+    func bell(source: TerminalView) {
+        original?.bell(source: source)
+    }
+    func clipboardCopy(source: TerminalView, content: Data) {
+        original?.clipboardCopy(source: source, content: content)
+    }
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {
+        original?.iTermContent(source: source, content: content)
+    }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        original?.rangeChanged(source: source, startY: startY, endY: endY)
+    }
+}
+
 // MARK: - ClaudyTerminalView
 
 final class ClaudyTerminalView: LocalProcessTerminalView {
     var isActiveTab: Bool = false
     private var keyMonitor: Any?
+    private var linkDelegate: LinkSanitizingDelegate?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         registerForDraggedTypes([.fileURL])
+
+        // Install URL-sanitizing delegate proxy (must be after super.init which sets terminalDelegate = self)
+        let proxy = LinkSanitizingDelegate(original: self)
+        self.linkDelegate = proxy
+        self.terminalDelegate = proxy
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleTerminalCommand(_:)),
