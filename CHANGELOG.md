@@ -2,6 +2,14 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.5.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.5.1) — Fix Cmd+Click URL Opening
+
+### Bug Fixes
+- Fixed Cmd+Click on terminal links failing with macOS error -50 ("The application can't be opened")
+  - Root cause: SwiftTerm's implicit link detection returns bare hostnames like `github.com/user/repo` without a scheme, causing `URL(string:)` to parse the hostname as the URL scheme
+  - Added a delegate proxy that prepends `https://` to scheme-less URLs before opening
+  - URLs with existing schemes (`https://`, `mailto:`, `tel:`, etc.) pass through unchanged
+
 ## [v1.5.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.5.0) — Remember CLI Selection
 
 ### New Features
