@@ -44,6 +44,9 @@ struct MainWindow: View {
         .navigationTitle(windowTitle)
         .onAppear { AppDelegate.tabManager = tabManager }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            showSettings = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newTab)) { _ in
             tabManager.addNewTab()
         }
@@ -275,13 +278,22 @@ struct SettingsSheet: View {
                         value: $config.orphanTimeoutSeconds, in: 5...300, step: 5)
                 Stepper("Monitor interval: \(config.processMonitorInterval)s",
                         value: $config.processMonitorInterval, in: 1...30, step: 1)
+                Toggle("MCP standby mode", isOn: $config.mcpStandbyEnabled)
+                if config.mcpStandbyEnabled {
+                    Stepper("Standby after idle: \(config.mcpStandbyIdleSeconds)s",
+                            value: $config.mcpStandbyIdleSeconds, in: 30...600, step: 30)
+                }
             }
         }
         .formStyle(.grouped)
         .frame(width: 400, height: 320)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { config.save(); dismiss() }
+                Button("Done") {
+                    config.save()
+                    NotificationCenter.default.post(name: .configurationChanged, object: nil)
+                    dismiss()
+                }
             }
         }
     }

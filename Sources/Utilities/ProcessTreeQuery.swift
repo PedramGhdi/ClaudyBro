@@ -129,7 +129,24 @@ enum ProcessTreeQuery {
         if joined.contains("brave-search") { return "Brave Search MCP Server" }
         if joined.contains("playwright") || joined.contains("@playwright") { return "Playwright MCP Server" }
         if joined.contains("context7") { return "Context7 MCP Server" }
-        if joined.contains("mcp") { return "MCP Server" }
+        if joined.contains("mcp") {
+            // Try to extract a meaningful name from @scope/package-name in args
+            for arg in args {
+                if let range = arg.range(of: #"@[\w\-]+/([\w\-]+)"#, options: .regularExpression) {
+                    let pkg = String(arg[range])
+                    let name = pkg.split(separator: "/").last.map(String.init) ?? pkg
+                    let cleaned = name
+                        .replacingOccurrences(of: "mcp-server-", with: "")
+                        .replacingOccurrences(of: "mcp-", with: "")
+                        .replacingOccurrences(of: "-mcp", with: "")
+                    let capitalized = cleaned.split(separator: "-")
+                        .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                        .joined(separator: " ")
+                    return "\(capitalized) MCP Server"
+                }
+            }
+            return "MCP Server"
+        }
 
         // Language servers / tools
         if joined.contains("tsserver") || joined.contains("typescript-language") { return "TypeScript Language Server" }
@@ -154,12 +171,18 @@ enum ProcessTreeQuery {
     }
 
     /// Check if a process is an MCP server (legitimately idle, should not be flagged as orphan).
+    /// Must stay aligned with describeProcess() — any process labeled as MCP must be detected here.
     static func isMCPServer(pid: pid_t) -> Bool {
         let args = getProcessArgs(pid: pid)
         let joined = args.joined(separator: " ").lowercased()
         return joined.contains("mcp")
             || joined.contains("language-server")
             || joined.contains("tsserver")
+            || joined.contains("brave-search")
+            || joined.contains("shadcn")
+            || joined.contains("playwright")
+            || joined.contains("@playwright")
+            || joined.contains("context7")
     }
 
     // MARK: - Working Directory
