@@ -192,13 +192,23 @@ struct ChildProcessRow: View {
                     }
 
                     if process.isMCPServer {
-                        Text("MCP")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.green.opacity(0.15))
-                            .cornerRadius(3)
+                        if process.isInStandby {
+                            Text("STANDBY")
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.orange.opacity(0.15))
+                                .cornerRadius(3)
+                        } else {
+                            Text("MCP")
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.green.opacity(0.15))
+                                .cornerRadius(3)
+                        }
                     }
                 }
             }
@@ -219,7 +229,7 @@ struct ChildProcessRow: View {
     }
 
     private var iconName: String {
-        if process.isMCPServer { return "server.rack" }
+        if process.isMCPServer { return process.isInStandby ? "moon.zzz" : "server.rack" }
         let desc = process.processDescription.lowercased()
         for provider in CLIProvider.allCases {
             if desc.contains(provider.processKeyword) { return provider.iconName }
@@ -231,7 +241,7 @@ struct ChildProcessRow: View {
     }
 
     private var iconColor: Color {
-        if process.isMCPServer { return .green }
+        if process.isMCPServer { return process.isInStandby ? .orange : .green }
         let desc = process.processDescription.lowercased()
         for provider in CLIProvider.allCases {
             if desc.contains(provider.processKeyword) { return Color(nsColor: provider.color) }

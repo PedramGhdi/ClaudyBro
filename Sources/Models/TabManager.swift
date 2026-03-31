@@ -143,6 +143,8 @@ final class TerminalTab: Identifiable, ObservableObject {
         monitor.monitorInterval = TimeInterval(config.processMonitorInterval)
         monitor.orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
         monitor.autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
+        monitor.standbyEnabled = config.mcpStandbyEnabled
+        monitor.standbyIdleThreshold = TimeInterval(config.mcpStandbyIdleSeconds)
         self.processMonitor = monitor
     }
 

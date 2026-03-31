@@ -2,6 +2,25 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.6.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.6.0) — MCP Server Stability & Standby Mode
+
+### Bug Fixes
+- **Fixed MCP servers being incorrectly killed** — duplicate detection was grouping all unrecognized MCP servers under the generic "MCP Server" label and killing all but the newest. Removed the duplicate-killing logic entirely; Claude Code manages its own MCP lifecycle.
+- **Fixed Brave Search, Playwright, Shadcn, Context7 triggering orphan detection** — `isMCPServer()` now recognizes all known server patterns, aligned with the UI labels in `describeProcess()`. Previously these servers could be flagged as orphans and auto-killed.
+- **Fixed MCP servers killed instantly on Claude exit** — added a 15-second grace period before killing MCP servers when the CLI disappears, allowing Claude to restart without losing its MCP connections.
+- **Fixed Settings not opening** — `Settings…` menu item and Cmd+, were posting a notification that nobody was listening to. MainWindow now subscribes and opens the sheet correctly.
+- **Fixed settings changes not applying to running monitors** — all process monitor settings (timeouts, intervals, standby) now propagate live to every tab's monitor when you click Done, without needing to restart.
+
+### New Features
+- **MCP Standby Mode** — idle MCP servers are suspended with `SIGSTOP` after 90 seconds of inactivity. macOS aggressively compresses their memory while frozen. A 1-second pulse timer briefly wakes each standby server to check for pending requests (≤1s latency overhead). Servers resume automatically when Claude calls them.
+- **Standby UI** — suspended servers show an orange `STANDBY` badge and moon icon instead of the green `MCP` badge.
+- **Live settings propagation** — changing any process monitor setting in Settings → Done instantly applies to all running tabs.
+
+### Changes
+- Auto-kill orphan timeout reduced from 120s → 90s
+- MCP standby idle threshold defaults to 90s (configurable in Settings)
+- Improved MCP server descriptions: `@scope/mcp-server-github` now shows as "Github MCP Server" instead of generic "MCP Server"
+
 ## [v1.5.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.5.1) — Fix Cmd+Click URL Opening
 
 ### Bug Fixes
