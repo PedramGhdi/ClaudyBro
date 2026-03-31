@@ -48,9 +48,9 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually, in bulk, or just wait — orphans are automatically killed after 2 minutes with a live countdown in the status bar.
 
-- **Smart MCP cleanup** — Duplicate MCP servers are automatically killed (keeps the newest instance). When Claude exits, all remaining MCP servers are terminated automatically — no more leftover node processes eating memory.
+- **MCP standby mode** — Idle MCP servers are suspended with `SIGSTOP` after 90 seconds of inactivity. macOS aggressively compresses their memory while frozen (typically 60–70% reduction). A 1-second pulse timer briefly wakes each server to check for pending work — Claude's requests are served with ≤1s added latency. Servers show an orange **STANDBY** badge while suspended and resume automatically and transparently when called.
 
-- **MCP-aware monitoring** — ClaudyBro identifies MCP servers (Shadcn, Brave Search, Playwright, Context7) by inspecting their command-line args via `KERN_PROCARGS2`. These are tagged with an "MCP" badge in the process inspector and excluded from false-positive orphan alerts.
+- **MCP-aware monitoring** — ClaudyBro identifies MCP servers by inspecting command-line args via `KERN_PROCARGS2` — Shadcn, Brave Search, Playwright, Context7, and any `@scope/mcp-server-*` package are recognised. These are tagged with a green **MCP** badge in the process inspector and excluded from orphan detection entirely. When Claude exits, remaining MCP servers are cleaned up after a 15-second grace period (allowing Claude to restart without losing connections).
 
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
@@ -64,14 +64,21 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, directory in tab title |
 | **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
-| **Auto-kill orphans** | Orphaned processes are automatically killed after 2 minutes (configurable) with live countdown |
+| **MCP standby mode** | Idle MCP servers suspended with SIGSTOP after 90s; pulse-woken for requests; orange STANDBY badge while frozen |
+| **Auto-kill orphans** | Orphaned processes are automatically killed after 90s (configurable) with live countdown |
 | **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
 | **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
 | **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
 | **Theme** | Dark theme matching Claude Code's aesthetic |
-| **Settings** | Font size, CLI binary paths (Claude/Gemini/Codex), orphan timeout, auto-kill timeout |
+| **Settings** | Font size, CLI binary paths, orphan/auto-kill timeouts, MCP standby toggle and idle threshold |
+
+## Screenshots
+
+| Settings | Process Monitor |
+|----------|----------------|
+| ![Settings](Screenshots/settings-full.png) | ![Process Monitor Settings](Screenshots/settings-process-monitor.png) |
 
 ## Keyboard Shortcuts
 
@@ -150,7 +157,7 @@ ClaudyBro.app (3.7 MB)
 2. Every 5 seconds (background thread), it queries all descendant processes via `sysctl`
 3. For each `node` process, it samples CPU time via `proc_pidinfo(PROC_PIDTASKINFO)`
 4. If CPU time hasn't changed for 2+ consecutive polls (~10s), the process is marked as an orphan candidate
-5. Command-line args are inspected via `KERN_PROCARGS2` — processes containing "mcp", "language-server", or "tsserver" are excluded (legitimately idle)
+5. Command-line args are inspected via `KERN_PROCARGS2` — processes containing "mcp", "language-server", "tsserver", "brave-search", "shadcn", "playwright", or "context7" are excluded (legitimately idle MCP servers)
 6. After the configured timeout (default 30s), confirmed orphans appear in the status bar with a detail panel
 
 ## Configuration
@@ -167,9 +174,11 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "theme": "dark",
   "orphanTimeoutSeconds": 30,
   "processMonitorInterval": 5,
-  "autoKillTimeoutSeconds": 120,
+  "autoKillTimeoutSeconds": 90,
   "preferredCLI": "claude",
-  "preferredDangerousMode": false
+  "preferredDangerousMode": false,
+  "mcpStandbyEnabled": true,
+  "mcpStandbyIdleSeconds": 90
 }
 ```
 
