@@ -11,7 +11,6 @@ struct TrackedProcess: Identifiable {
     // Populated once on first discovery
     var processDescription: String = ""
     var isMCPServer: Bool = false
-    var isInStandby: Bool = false
     var lastActiveTime: Date?
 
     // Updated each poll cycle

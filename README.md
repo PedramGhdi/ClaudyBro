@@ -48,7 +48,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Orphaned process cleanup** — Node processes that outlive their parent tool call are detected as orphans after 30s of idle time. Kill them individually, in bulk, or just wait — orphans are automatically killed after 2 minutes with a live countdown in the status bar.
 
-- **MCP standby mode** — Idle MCP servers are suspended with `SIGSTOP` after 90 seconds of inactivity. macOS aggressively compresses their memory while frozen (typically 60–70% reduction). A 1-second pulse timer briefly wakes each server to check for pending work — Claude's requests are served with ≤1s added latency. Servers show an orange **STANDBY** badge while suspended and resume automatically and transparently when called.
+- **MCP idle cleanup** — Idle MCP servers are automatically killed after 90 seconds of inactivity (configurable, set to 0 to disable). Claude Code auto-restarts them on demand when needed. This frees both CPU and memory from unused servers, with zero monitoring overhead while they're gone.
 
 - **MCP-aware monitoring** — ClaudyBro identifies MCP servers by inspecting command-line args via `KERN_PROCARGS2` — Shadcn, Brave Search, Playwright, Context7, and any `@scope/mcp-server-*` package are recognised. These are tagged with a green **MCP** badge in the process inspector and excluded from orphan detection entirely. When Claude exits, remaining MCP servers are cleaned up after a 15-second grace period (allowing Claude to restart without losing connections).
 
@@ -64,15 +64,15 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, directory in tab title |
 | **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
-| **MCP standby mode** | Idle MCP servers suspended with SIGSTOP after 90s; pulse-woken for requests; orange STANDBY badge while frozen |
+| **MCP idle cleanup** | Idle MCP servers killed after 90s; Claude auto-restarts on demand; configurable timeout (0 to disable) |
 | **Auto-kill orphans** | Orphaned processes are automatically killed after 90s (configurable) with live countdown |
-| **Process monitor** | sysctl-based (no shell spawning), polls every 5s on a background thread |
+| **Process monitor** | sysctl-based (no shell spawning), adaptive polling: 2s active / 5s normal / 15s idle |
 | **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
 | **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
 | **Theme** | Dark theme matching Claude Code's aesthetic |
-| **Settings** | Font size, CLI binary paths, orphan/auto-kill timeouts, MCP standby toggle and idle threshold |
+| **Settings** | Font size, CLI binary paths, orphan/auto-kill timeouts, MCP idle kill timeout |
 
 ## Screenshots
 
@@ -177,8 +177,7 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "autoKillTimeoutSeconds": 90,
   "preferredCLI": "claude",
   "preferredDangerousMode": false,
-  "mcpStandbyEnabled": true,
-  "mcpStandbyIdleSeconds": 90
+  "mcpIdleKillSeconds": 90
 }
 ```
 
