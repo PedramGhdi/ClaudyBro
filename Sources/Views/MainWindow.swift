@@ -24,7 +24,8 @@ struct MainWindow: View {
                     TerminalViewWrapper(
                         processManager: tab.processManager,
                         processMonitor: tab.processMonitor,
-                        isActive: tab.id == tabManager.activeTabId
+                        isActive: tab.id == tabManager.activeTabId,
+                        initialDirectory: tab.initialDirectory
                     )
                     .opacity(tab.id == tabManager.activeTabId ? 1 : 0)
                     .allowsHitTesting(tab.id == tabManager.activeTabId)
@@ -48,7 +49,8 @@ struct MainWindow: View {
             showSettings = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .newTab)) { _ in
-            tabManager.addNewTab()
+            let dir = tabManager.activeTab?.processMonitor.currentDirectory
+            tabManager.addNewTab(initialDirectory: dir?.isEmpty == false ? dir : nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: .closeTab)) { _ in
             if let id = tabManager.activeTabId { tabManager.requestCloseTab(id: id) }
@@ -74,6 +76,8 @@ struct MainWindow: View {
         guard let tab = tabManager.activeTab else { windowTitle = "ClaudyBro"; return }
         let dir = tab.processMonitor.currentDirectory
         guard !dir.isEmpty else { windowTitle = "ClaudyBro"; return }
+        // Keep lastWorkingDirectory fresh so app restart uses the latest cwd
+        UserDefaults.standard.set(dir, forKey: "lastWorkingDirectory")
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let abbreviated = dir.hasPrefix(home) ? "~" + dir.dropFirst(home.count) : dir
         if abbreviated != windowTitle { windowTitle = abbreviated }
