@@ -3,7 +3,7 @@ import Foundation
 
 /// Monitors the child process tree of the shell process.
 /// Detects truly orphaned node processes while excluding legitimate MCP servers.
-/// Supports MCP server standby mode (SIGSTOP/SIGCONT) for memory optimization.
+/// Idle MCP servers are killed after a configurable timeout — Claude Code auto-restarts them.
 final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
@@ -12,8 +12,7 @@ final class ProcessMonitor: ObservableObject {
     var monitorInterval: TimeInterval = 5
     var orphanTimeout: TimeInterval = 30
     var autoKillTimeout: TimeInterval = 90
-    var standbyEnabled: Bool = true
-    var standbyIdleThreshold: TimeInterval = 90
+    var mcpIdleTimeout: TimeInterval = 90
 
     var hasActiveProcesses: Bool { !childProcesses.isEmpty }
 
@@ -22,7 +21,8 @@ final class ProcessMonitor: ObservableObject {
     private var cliWasRunning: Bool = false
     private var mcpCleanupWorkItem: DispatchWorkItem?
     private var cliExitGracePeriod: TimeInterval = 15
-    private var pulseTimer: DispatchSourceTimer?
+    private var idlePollStreak: Int = 0
+    private var activeInterval: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -42,6 +42,8 @@ final class ProcessMonitor: ObservableObject {
     func startMonitoring(shellPID pid: pid_t) {
         shellPID = pid
         timer?.invalidate()
+        activeInterval = monitorInterval
+        idlePollStreak = 0
         // Poll on background queue to avoid main-thread memory pressure
         timer = Timer.scheduledTimer(
             withTimeInterval: monitorInterval, repeats: true
@@ -56,11 +58,6 @@ final class ProcessMonitor: ObservableObject {
         timer = nil
         mcpCleanupWorkItem?.cancel()
         mcpCleanupWorkItem = nil
-        stopPulseTimer()
-        // Resume any standby servers so they aren't left frozen
-        for process in childProcesses where process.isInStandby {
-            kill(process.pid, SIGCONT)
-        }
         childProcesses = []
         orphanedProcesses = []
     }
@@ -100,21 +97,7 @@ final class ProcessMonitor: ObservableObject {
         monitorInterval = TimeInterval(config.processMonitorInterval)
         orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
         autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
-        standbyIdleThreshold = TimeInterval(config.mcpStandbyIdleSeconds)
-
-        let wasEnabled = standbyEnabled
-        standbyEnabled = config.mcpStandbyEnabled
-
-        // If standby was just disabled, wake all sleeping servers
-        if wasEnabled && !standbyEnabled {
-            for process in childProcesses where process.isInStandby {
-                kill(process.pid, SIGCONT)
-            }
-            for i in childProcesses.indices where childProcesses[i].isInStandby {
-                childProcesses[i].isInStandby = false
-            }
-            stopPulseTimer()
-        }
+        mcpIdleTimeout = TimeInterval(config.mcpIdleKillSeconds)
 
         // Re-schedule poll timer if interval changed
         if let existingTimer = timer, existingTimer.timeInterval != monitorInterval {
@@ -135,36 +118,35 @@ final class ProcessMonitor: ObservableObject {
         let descendants = ProcessTreeQuery.getDescendantProcesses(of: shellPID)
         var updated: [TrackedProcess] = []
         var orphans: [TrackedProcess] = []
+        var mcpKilled: [pid_t] = []
 
         for entry in descendants {
             // Reuse existing tracked entry or create new
             var tracked = childProcesses.first(where: { $0.pid == entry.pid })
                 ?? createTrackedProcess(from: entry)
 
-            // Always fetch memory for the child process panel
             tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
             if tracked.isMCPServer {
-                // MCP server standby: track CPU to detect idle servers
-                if standbyEnabled && !tracked.isInStandby {
-                    let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
-                    tracked.previousCPUTime = tracked.lastCPUTime
-                    tracked.lastCPUTime = cpuTime
+                // MCP idle kill: track CPU to detect idle servers, kill after timeout
+                let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
+                tracked.previousCPUTime = tracked.lastCPUTime
+                tracked.lastCPUTime = cpuTime
 
-                    let cpuDelta = tracked.lastCPUTime - tracked.previousCPUTime
-                    if cpuDelta > 0.01 || tracked.previousCPUTime == 0 {
-                        tracked.lastActiveTime = Date()
-                    }
-
-                    if let lastActive = tracked.lastActiveTime,
-                       Date().timeIntervalSince(lastActive) >= standbyIdleThreshold
-                    {
-                        tracked.isInStandby = true
-                        kill(entry.pid, SIGSTOP)
-                        startPulseTimerIfNeeded()
-                    }
+                let cpuDelta = tracked.lastCPUTime - tracked.previousCPUTime
+                if cpuDelta > 0.01 || tracked.previousCPUTime == 0 {
+                    tracked.lastActiveTime = Date()
                 }
-                // If in standby, skip CPU sampling (process is frozen)
+
+                if mcpIdleTimeout > 0,
+                   let lastActive = tracked.lastActiveTime,
+                   Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
+                {
+                    // MCP server idle too long — kill it, Claude will restart on demand
+                    kill(entry.pid, SIGTERM)
+                    mcpKilled.append(entry.pid)
+                    continue // don't add to updated
+                }
             } else if tracked.isNodeProcess {
                 // Orphan detection for non-MCP node processes
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
@@ -201,19 +183,30 @@ final class ProcessMonitor: ObservableObject {
             updated.append(tracked)
         }
 
+        // Force-kill MCP servers that didn't respond to SIGTERM
+        if !mcpKilled.isEmpty {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                for pid in mcpKilled {
+                    if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
+                }
+            }
+        }
+
         // Detect CLI exit — schedule deferred MCP cleanup with grace period
         let cliKeywords = CLIProvider.allCases.map(\.processKeyword)
         let cliStillRunning = updated.contains { proc in
             let desc = proc.processDescription.lowercased()
             return cliKeywords.contains { desc.contains($0) }
         }
+
         if cliWasRunning && !cliStillRunning && !updated.isEmpty {
             // CLI just disappeared — schedule MCP cleanup after grace period
             if mcpCleanupWorkItem == nil {
                 let shellPid = self.shellPID
+                let mcpPids = updated.filter(\.isMCPServer).map(\.pid)
+
                 let workItem = DispatchWorkItem { [weak self] in
-                    guard let self = self else { return }
-                    self.mcpCleanupWorkItem = nil
+                    guard self != nil else { return }
 
                     // Re-check: is the CLI still gone?
                     let currentDescendants = ProcessTreeQuery.getDescendantProcesses(of: shellPid)
@@ -223,17 +216,6 @@ final class ProcessMonitor: ObservableObject {
                     }
                     guard !cliBack else { return }
 
-                    // CLI is truly gone — kill MCP servers (SIGCONT first if in standby)
-                    let mcpPids: [pid_t] = DispatchQueue.main.sync {
-                        let mcps = self.childProcesses.filter(\.isMCPServer)
-                        let pids = mcps.map(\.pid)
-                        // Resume standby servers before killing
-                        for mcp in mcps where mcp.isInStandby {
-                            kill(mcp.pid, SIGCONT)
-                        }
-                        self.childProcesses.removeAll { $0.isMCPServer }
-                        return pids
-                    }
                     for pid in mcpPids { kill(pid, SIGTERM) }
                     DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
                         for pid in mcpPids {
@@ -241,7 +223,9 @@ final class ProcessMonitor: ObservableObject {
                         }
                     }
 
-                    DispatchQueue.main.async {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.mcpCleanupWorkItem = nil
+                        self?.childProcesses.removeAll { $0.isMCPServer }
                         NotificationCenter.default.post(
                             name: .cliProcessExited, object: nil,
                             userInfo: ["shellPid": shellPid]
@@ -286,6 +270,9 @@ final class ProcessMonitor: ObservableObject {
         // (descendants like MCP servers may have different CWDs)
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
+        // Adaptive poll interval: fast when CLI active, slow when fully idle
+        adjustPollInterval(cliActive: cliStillRunning)
+
         DispatchQueue.main.async { [weak self] in
             self?.childProcesses = updated
             self?.orphanedProcesses = orphans
@@ -293,69 +280,31 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
-    // MARK: - MCP Standby Pulse
+    // MARK: - Adaptive Poll Interval
 
-    /// Pulse timer briefly wakes standby MCP servers to check for pending work.
-    /// Runs every 1 second on a background queue.
-    private func pulse() {
-        let standbyServers: [TrackedProcess] = DispatchQueue.main.sync {
-            childProcesses.filter { $0.isMCPServer && $0.isInStandby }
-        }
-        guard !standbyServers.isEmpty else {
-            stopPulseTimer()
-            return
-        }
-
-        // Record CPU, then SIGCONT all standby servers
-        var cpuBefore: [pid_t: Double] = [:]
-        for server in standbyServers {
-            cpuBefore[server.pid] = ProcessTreeQuery.getProcessCPUTime(pid: server.pid)
-            kill(server.pid, SIGCONT)
+    /// Adjust poll frequency: 2s when CLI active, default (5s) normally, 15s when fully idle.
+    private func adjustPollInterval(cliActive: Bool) {
+        let target: TimeInterval
+        if cliActive {
+            target = min(monitorInterval, 2)
+            idlePollStreak = 0
+        } else {
+            idlePollStreak += 1
+            // After 6 consecutive idle polls (~30s), slow down to 15s
+            target = idlePollStreak > 6 ? 15 : monitorInterval
         }
 
-        // Wait 200ms for servers to process any pending requests
-        Thread.sleep(forTimeInterval: 0.2)
-
-        // Check which servers actually did work
-        var wokenPids: [pid_t] = []
-        for server in standbyServers {
-            guard ProcessTreeQuery.isProcessAlive(server.pid) else { continue }
-            let cpuAfter = ProcessTreeQuery.getProcessCPUTime(pid: server.pid)
-            let delta = cpuAfter - (cpuBefore[server.pid] ?? 0)
-            if delta > 0.001 {
-                // Server processed a request — keep it awake
-                wokenPids.append(server.pid)
-            } else {
-                // Still idle — put back to sleep
-                kill(server.pid, SIGSTOP)
+        guard target != activeInterval else { return }
+        activeInterval = target
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.timer?.invalidate()
+            self.timer = Timer.scheduledTimer(
+                withTimeInterval: target, repeats: true
+            ) { [weak self] _ in
+                DispatchQueue.global(qos: .utility).async { self?.poll() }
             }
         }
-
-        if !wokenPids.isEmpty {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                for i in self.childProcesses.indices {
-                    if wokenPids.contains(self.childProcesses[i].pid) {
-                        self.childProcesses[i].isInStandby = false
-                        self.childProcesses[i].lastActiveTime = Date()
-                    }
-                }
-            }
-        }
-    }
-
-    private func startPulseTimerIfNeeded() {
-        guard pulseTimer == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now() + 1, repeating: 1)
-        timer.setEventHandler { [weak self] in self?.pulse() }
-        timer.resume()
-        pulseTimer = timer
-    }
-
-    private func stopPulseTimer() {
-        pulseTimer?.cancel()
-        pulseTimer = nil
     }
 
     // MARK: - Process Discovery

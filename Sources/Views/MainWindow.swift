@@ -282,11 +282,8 @@ struct SettingsSheet: View {
                         value: $config.orphanTimeoutSeconds, in: 5...300, step: 5)
                 Stepper("Monitor interval: \(config.processMonitorInterval)s",
                         value: $config.processMonitorInterval, in: 1...30, step: 1)
-                Toggle("MCP standby mode", isOn: $config.mcpStandbyEnabled)
-                if config.mcpStandbyEnabled {
-                    Stepper("Standby after idle: \(config.mcpStandbyIdleSeconds)s",
-                            value: $config.mcpStandbyIdleSeconds, in: 30...600, step: 30)
-                }
+                Stepper("Kill idle MCP servers after: \(config.mcpIdleKillSeconds)s",
+                        value: $config.mcpIdleKillSeconds, in: 0...600, step: 30)
             }
         }
         .formStyle(.grouped)

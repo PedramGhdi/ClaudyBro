@@ -2,6 +2,17 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.7.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.7.0) — Kill Idle MCP Servers
+
+### Breaking Changes
+- **Removed MCP standby mode** — `SIGSTOP`/`SIGCONT` standby replaced with simple idle kill. The standby feature consumed significant CPU (1-second pulse timer waking all frozen servers constantly) while only saving CPU, not memory. Idle MCP servers are now killed after 90 seconds — Claude Code auto-restarts them on demand.
+- Config key `mcpStandbyEnabled` and `mcpStandbyIdleSeconds` replaced with `mcpIdleKillSeconds`
+
+### Improvements
+- **Adaptive poll interval** — process monitor now polls every 2s when CLI is active, 5s normally, and slows to 15s after 30 seconds of full idle. Reduces process table scans from 12/min to 4/min when idle.
+- **Fixed potential deadlock** — removed `DispatchQueue.main.sync` call from background thread in MCP cleanup path
+- **Reduced resource overhead** — eliminated ~100 lines of standby complexity (pulse timer, wake/refreeze logic, CLI CPU tracking, SIGSTOP/SIGCONT signals)
+
 ## [v1.6.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.6.1) — Fix Directory Persistence
 
 ### Bug Fixes

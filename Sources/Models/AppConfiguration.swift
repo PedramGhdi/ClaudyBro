@@ -15,8 +15,7 @@ final class AppConfiguration: ObservableObject {
     @Published var autoKillTimeoutSeconds: Int = 90
     @Published var preferredCLI: String = ""
     @Published var preferredDangerousMode: Bool = false
-    @Published var mcpStandbyEnabled: Bool = true
-    @Published var mcpStandbyIdleSeconds: Int = 90
+    @Published var mcpIdleKillSeconds: Int = 90
 
     var preferredProvider: CLIProvider? {
         CLIProvider(rawValue: preferredCLI)
@@ -42,8 +41,7 @@ final class AppConfiguration: ObservableObject {
             if let v = json["autoKillTimeoutSeconds"] as? Int { autoKillTimeoutSeconds = v }
             if let v = json["preferredCLI"] as? String { preferredCLI = v }
             if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
-            if let v = json["mcpStandbyEnabled"] as? Bool { mcpStandbyEnabled = v }
-            if let v = json["mcpStandbyIdleSeconds"] as? Int { mcpStandbyIdleSeconds = v }
+            if let v = json["mcpIdleKillSeconds"] as? Int { mcpIdleKillSeconds = v }
         } catch {
             // Ignore corrupt config — use defaults
         }
@@ -62,8 +60,7 @@ final class AppConfiguration: ObservableObject {
             "autoKillTimeoutSeconds": autoKillTimeoutSeconds,
             "preferredCLI": preferredCLI,
             "preferredDangerousMode": preferredDangerousMode,
-            "mcpStandbyEnabled": mcpStandbyEnabled,
-            "mcpStandbyIdleSeconds": mcpStandbyIdleSeconds,
+            "mcpIdleKillSeconds": mcpIdleKillSeconds,
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
