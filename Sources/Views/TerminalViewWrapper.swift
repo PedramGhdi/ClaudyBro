@@ -7,6 +7,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
     @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
     var isActive: Bool
+    var initialDirectory: String?
 
     func makeNSView(context: Context) -> ClaudyTerminalView {
         let terminalView = ClaudyTerminalView(frame: .zero)
@@ -14,10 +15,11 @@ struct TerminalViewWrapper: NSViewRepresentable {
         terminalView.isActiveTab = isActive
 
         let (executable, args, env) = processManager.resolveShellCommand()
-        let lastDir = UserDefaults.standard.string(forKey: "lastWorkingDirectory")
+        let startDir = initialDirectory
+            ?? UserDefaults.standard.string(forKey: "lastWorkingDirectory")
         terminalView.startProcess(
             executable: executable, args: args, environment: env,
-            currentDirectory: lastDir
+            currentDirectory: startDir
         )
 
         // Use SwiftTerm's shellPid directly — reliable, no guessing
@@ -180,13 +182,12 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
 
     @objc private func saveWorkingDirectory() {
         guard isActiveTab else { return }
-        let appPID = ProcessInfo.processInfo.processIdentifier
-        for child in ProcessTreeQuery.getChildProcesses(of: appPID) {
-            if let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: child.pid) {
-                UserDefaults.standard.set(cwd, forKey: "lastWorkingDirectory")
-                return
-            }
-        }
+        let pid = self.process.shellPid
+        guard pid > 0,
+              let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: pid),
+              !cwd.isEmpty
+        else { return }
+        UserDefaults.standard.set(cwd, forKey: "lastWorkingDirectory")
     }
 
     // MARK: - Scroll Position Preservation

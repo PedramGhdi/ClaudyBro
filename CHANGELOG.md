@@ -2,6 +2,13 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.6.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.6.1) — Fix Directory Persistence
+
+### Bug Fixes
+- **Fixed working directory not remembered on app restart** — `saveWorkingDirectory()` was scanning all child processes of the app instead of the active tab's own shell PID, often saving the wrong directory or failing entirely at quit time
+- **Fixed new tabs starting in stale directory** — new tabs read `lastWorkingDirectory` from UserDefaults which was only written at the last app quit. New tabs now inherit the active tab's live working directory
+- **Fixed `lastWorkingDirectory` going stale** — the active tab's cwd is now persisted to UserDefaults every 2 seconds via the existing window title timer, so the saved directory is always current
+
 ## [v1.6.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.6.0) — MCP Server Stability & Standby Mode
 
 ### Bug Fixes

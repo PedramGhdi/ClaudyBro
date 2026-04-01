@@ -23,8 +23,8 @@ final class TabManager: ObservableObject {
         tabs.contains { $0.hasAnyCLIRunning }
     }
 
-    func addNewTab() {
-        let tab = TerminalTab()
+    func addNewTab(initialDirectory: String? = nil) {
+        let tab = TerminalTab(initialDirectory: initialDirectory)
         tabs.append(tab)
         activeTabId = tab.id
     }
@@ -136,8 +136,10 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var title: String = "Shell"
     let processManager = CLIProcessManager()
     let processMonitor: ProcessMonitor
+    let initialDirectory: String?
 
-    init() {
+    init(initialDirectory: String? = nil) {
+        self.initialDirectory = initialDirectory
         let monitor = ProcessMonitor()
         let config = AppConfiguration.shared
         monitor.monitorInterval = TimeInterval(config.processMonitorInterval)
