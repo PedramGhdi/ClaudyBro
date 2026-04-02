@@ -275,6 +275,9 @@ struct SettingsSheet: View {
                     }
                 }
             }
+            Section("Terminal") {
+                Toggle("Full scrollback (disable alternate screen)", isOn: $config.disableAltScreen)
+            }
             Section("Process Monitor") {
                 Stepper("Auto-kill orphans after: \(config.autoKillTimeoutSeconds)s",
                         value: $config.autoKillTimeoutSeconds, in: 0...600, step: 10)
@@ -287,7 +290,7 @@ struct SettingsSheet: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 320)
+        .frame(width: 400, height: 370)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {

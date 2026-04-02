@@ -2,6 +2,14 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.8.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.8.0) — Full Scrollback History
+
+### New Features
+- **Full scrollback in Claude sessions** — disabled alternate screen buffer by default so all Claude Code output stays in the main scrollback buffer. Previous messages no longer disappear when new output arrives.
+- **Alt-screen byte filter** — new `AltScreenFilter` strips DEC private modes 47/1047/1049 from the PTY stream with support for split-sequence handling and combined parameters.
+- **Settings toggle** — "Full scrollback (disable alternate screen)" option in Settings under Terminal section.
+- **Configurable via JSON** — `disableAltScreen` key in `~/.config/claudybro/config.json` (default: `true`).
+
 ## [v1.7.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.7.0) — Kill Idle MCP Servers
 
 ### Breaking Changes

@@ -114,6 +114,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     var isActiveTab: Bool = false
     private var keyMonitor: Any?
     private var linkDelegate: LinkSanitizingDelegate?
+    private let altScreenFilter = AltScreenFilter()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -178,6 +179,11 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         if terminal.applicationCursor {
             feed(text: "\u{1b}[?1l")
         }
+
+        // Exit alternate screen buffer if still active (defensive — filter should prevent this)
+        if terminal.isCurrentBufferAlternate {
+            feed(text: "\u{1b}[?1049l")
+        }
     }
 
     @objc private func saveWorkingDirectory() {
@@ -205,6 +211,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     /// snaps yDisp to yBase on new output. We save/restore yDisp around feed.
     /// Also prevents feedPrepare() from clearing active text selection.
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        let filtered = altScreenFilter.filter(slice)
+        guard !filtered.isEmpty else { return }
+
         let wasScrolledUp = canScroll && scrollPosition < 1.0
         let savedYDisp = getTerminal().buffer.yDisp
 
@@ -214,7 +223,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
 
         if wasScrolledUp { suppressScrollerUpdate = true }
 
-        super.dataReceived(slice: slice)
+        super.dataReceived(slice: filtered)
 
         allowMouseReporting = savedMouseReporting
 
@@ -234,6 +243,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         changeScrollback(5000)
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
+        altScreenFilter.isEnabled = AppConfiguration.shared.disableAltScreen
     }
 
     // MARK: - Focus management
