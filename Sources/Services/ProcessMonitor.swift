@@ -8,6 +8,7 @@ final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
     @Published var currentDirectory: String = ""
+    @Published var contextUsage: ContextUsage = ContextUsage()
 
     var monitorInterval: TimeInterval = 5
     var orphanTimeout: TimeInterval = 30
@@ -18,6 +19,7 @@ final class ProcessMonitor: ObservableObject {
 
     private var timer: Timer?
     private var shellPID: pid_t = 0
+    private var lastContextFileDate: Date?
     private var cliWasRunning: Bool = false
     private var mcpCleanupWorkItem: DispatchWorkItem?
     private var cliExitGracePeriod: TimeInterval = 15
@@ -89,6 +91,23 @@ final class ProcessMonitor: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.poll()
         }
+    }
+
+    /// Update context usage, merging new data with existing.
+    /// Terminal-scanned fields (mode, effort) are preserved unless the new value provides them.
+    func updateContextUsage(_ usage: ContextUsage) {
+        var merged = usage
+        // Preserve terminal-scanned mode/effort if the new source doesn't provide them
+        if merged.modeIndicator == nil { merged.modeIndicator = contextUsage.modeIndicator }
+        if merged.effort == nil { merged.effort = contextUsage.effort }
+        guard merged != contextUsage else { return }
+        contextUsage = merged
+    }
+
+    /// Clear context usage (e.g., when CLI exits).
+    func clearContextUsage() {
+        guard !contextUsage.isEmpty else { return }
+        contextUsage = ContextUsage()
     }
 
     /// Re-read settings from AppConfiguration and apply to this monitor.
@@ -226,6 +245,7 @@ final class ProcessMonitor: ObservableObject {
                     DispatchQueue.main.async { [weak self] in
                         self?.mcpCleanupWorkItem = nil
                         self?.childProcesses.removeAll { $0.isMCPServer }
+                        self?.clearContextUsage()
                         NotificationCenter.default.post(
                             name: .cliProcessExited, object: nil,
                             userInfo: ["shellPid": shellPid]
@@ -270,6 +290,9 @@ final class ProcessMonitor: ObservableObject {
         // (descendants like MCP servers may have different CWDs)
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
+        // Read context usage from statusline JSON (only when CLI active, only if file changed)
+        let newContextUsage: ContextUsage? = cliStillRunning ? pollContextFile() : nil
+
         // Adaptive poll interval: fast when CLI active, slow when fully idle
         adjustPollInterval(cliActive: cliStillRunning)
 
@@ -277,6 +300,7 @@ final class ProcessMonitor: ObservableObject {
             self?.childProcesses = updated
             self?.orphanedProcesses = orphans
             if cwd != self?.currentDirectory { self?.currentDirectory = cwd }
+            if let ctx = newContextUsage { self?.updateContextUsage(ctx) }
         }
     }
 
@@ -305,6 +329,25 @@ final class ProcessMonitor: ObservableObject {
                 DispatchQueue.global(qos: .utility).async { self?.poll() }
             }
         }
+    }
+
+    // MARK: - Context File Polling
+
+    /// Read the context JSON file if it has been modified since last check.
+    /// Returns nil if file unchanged or unreadable — avoids unnecessary SwiftUI updates.
+    private func pollContextFile() -> ContextUsage? {
+        let fm = FileManager.default
+        let path = ContextUsageParser.contextFilePath
+
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              let modDate = attrs[.modificationDate] as? Date
+        else { return nil }
+
+        // Skip if file hasn't changed since last read
+        if let last = lastContextFileDate, modDate <= last { return nil }
+        lastContextFileDate = modDate
+
+        return ContextUsageParser.readFromFile()
     }
 
     // MARK: - Process Discovery

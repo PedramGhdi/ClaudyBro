@@ -13,6 +13,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         let terminalView = ClaudyTerminalView(frame: .zero)
         terminalView.configureAppearance()
         terminalView.isActiveTab = isActive
+        terminalView.processMonitor = processMonitor
 
         let (executable, args, env) = processManager.resolveShellCommand()
         let startDir = initialDirectory
@@ -112,9 +113,11 @@ private final class LinkSanitizingDelegate: TerminalViewDelegate {
 
 final class ClaudyTerminalView: LocalProcessTerminalView {
     var isActiveTab: Bool = false
+    weak var processMonitor: ProcessMonitor?
     private var keyMonitor: Any?
     private var linkDelegate: LinkSanitizingDelegate?
     private let altScreenFilter = AltScreenFilter()
+    private var contextScanScheduled = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -196,6 +199,41 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         UserDefaults.standard.set(cwd, forKey: "lastWorkingDirectory")
     }
 
+    // MARK: - Context Usage Scanning
+
+    /// Schedule a debounced scan of the terminal status line for effort/mode.
+    /// Uses a simple flag to avoid allocating DispatchWorkItems on every dataReceived chunk.
+    func scheduleContextScan() {
+        guard !contextScanScheduled else { return }
+        contextScanScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.contextScanScheduled = false
+            self?.scanTerminalStatusLine()
+        }
+    }
+
+    /// Scan the last few terminal rows for effort/mode indicators.
+    /// Context %, model, and cost come from the JSON file (read by ProcessMonitor).
+    private func scanTerminalStatusLine() {
+        let terminal = getTerminal()
+        let rows = terminal.rows
+        let scanRows = min(rows, 5)
+        var lines: [String] = []
+        for row in (rows - scanRows)..<rows {
+            if let bufferLine = terminal.getLine(row: row) {
+                let text = bufferLine.translateToString(trimRight: true)
+                if !text.isEmpty { lines.append(text) }
+            }
+        }
+        let (mode, effort) = ContextUsageParser.parseStatusLine(lines: lines)
+        guard mode != nil || effort != nil else { return }
+
+        var current = processMonitor?.contextUsage ?? ContextUsage()
+        if let mode { current.modeIndicator = mode }
+        if let effort { current.effort = effort }
+        processMonitor?.updateContextUsage(current)
+    }
+
     // MARK: - Scroll Position Preservation
 
     private var suppressScrollerUpdate = false
@@ -233,6 +271,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             // Trigger scroller update with restored position
             super.scrolled(source: getTerminal(), yDisp: savedYDisp)
         }
+
+        // Trigger debounced context usage scan after buffer is updated
+        scheduleContextScan()
     }
 
     func configureAppearance() {

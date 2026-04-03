@@ -13,27 +13,39 @@ struct StatusBarView: View {
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 12) {
-            if shellPID > 0 {
-                label("PID \(shellPID)")
+        ZStack {
+            // Left-aligned: PID + child processes
+            HStack(spacing: 12) {
+                if shellPID > 0 {
+                    label("PID \(shellPID)")
+                }
+
+                let childCount = processMonitor.childProcesses.count
+                if childCount > 0 {
+                    Button(action: { showChildPanel.toggle() }) {
+                        label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
+                    }
+                    .buttonStyle(.plain)
+                    .cursor(.pointingHand)
+                    .popover(isPresented: $showChildPanel, arrowEdge: .top) {
+                        ChildProcessPanel(processMonitor: processMonitor)
+                    }
+                }
+
+                Spacer()
             }
 
-            let childCount = processMonitor.childProcesses.count
-            if childCount > 0 {
-                Button(action: { showChildPanel.toggle() }) {
-                    label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
-                }
-                .buttonStyle(.plain)
-                .cursor(.pointingHand)
-                .popover(isPresented: $showChildPanel, arrowEdge: .top) {
-                    ChildProcessPanel(processMonitor: processMonitor)
-                }
+            // Center: context usage
+            if !processMonitor.contextUsage.isEmpty {
+                contextUsageView
             }
 
-            Spacer()
-
-            if !processMonitor.orphanedProcesses.isEmpty {
-                orphanBadge
+            // Right-aligned: orphan badge
+            HStack {
+                Spacer()
+                if !processMonitor.orphanedProcesses.isEmpty {
+                    orphanBadge
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -43,6 +55,71 @@ struct StatusBarView: View {
         .onReceive(countdownTimer) { newTick in
             // Only update tick when orphans exist — avoids unnecessary re-renders
             if !processMonitor.orphanedProcesses.isEmpty { tick = newTick }
+        }
+    }
+
+    // MARK: - Context Usage Display
+
+    private var contextUsageView: some View {
+        let usage = processMonitor.contextUsage
+        return HStack(spacing: 8) {
+            // Context usage percentage
+            if let pct = usage.usedPercentage {
+                HStack(spacing: 3) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 9))
+                    Text("\(pct)%")
+                }
+                .foregroundColor(contextColor(pct))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+            }
+
+            // Model name
+            if let model = usage.modelName {
+                Text(model)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(textColor.opacity(0.8))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(3)
+            }
+
+            // Effort
+            if let effort = usage.effort {
+                Text(effort)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(effortColor(effort))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(effortColor(effort).opacity(0.12))
+                    .cornerRadius(3)
+            }
+
+            // Mode: "bypass"
+            if let mode = usage.modeIndicator {
+                Text(mode)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color.orange.opacity(0.9))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(3)
+            }
+        }
+    }
+
+    private func contextColor(_ percentage: Int) -> Color {
+        if percentage >= 80 { return .red }
+        if percentage >= 60 { return .orange }
+        return Color(nsColor: Constants.accentColor)
+    }
+
+    private func effortColor(_ effort: String) -> Color {
+        switch effort {
+        case "high": return .green
+        case "medium": return .yellow
+        default: return .gray
         }
     }
 

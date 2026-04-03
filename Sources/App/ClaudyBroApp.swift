@@ -81,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shared reference set by MainWindow so we can check for running CLI sessions.
     static weak var tabManager: TabManager?
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        StatusLineBridge.ensureConfigured()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
