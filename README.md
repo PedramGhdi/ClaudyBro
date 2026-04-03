@@ -54,8 +54,6 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Context usage status bar** — Live display of context window usage %, model name, session cost, and effort level directly in ClaudyBro's bottom status bar. Auto-configures Claude Code's statusLine on first launch — no setup needed.
 
-  ![Context Status Bar](Screenshots/context-status-bar.png)
-
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
 ## Features
