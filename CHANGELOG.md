@@ -2,6 +2,20 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.9.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.9.0) — Context Usage Status Bar
+
+### New Features
+- **Live context usage in status bar** — shows context window usage percentage, model name, session cost, effort level, and bypass mode indicator directly in ClaudyBro's bottom status bar
+- **StatusLine bridge** — auto-configures Claude Code's `statusLine` setting to pipe session data to a temp JSON file that ClaudyBro reads
+- **Effort level display** — reads effort from Claude Code settings (project and global) with terminal buffer scanning as override for session-level `/effort` changes
+- **Color-coded context percentage** — green under 60%, orange 60-80%, red above 80%
+- **Model badge** — compact display of current model (e.g., "Opus 4.6")
+- **Mode indicator** — shows "bypass" badge when dangerous permissions mode is active
+
+### Improvements
+- **Context-aware polling** — JSON file only re-read when modification date changes, avoiding unnecessary disk I/O
+- **Merge-based context updates** — terminal-scanned effort/mode values preserved when JSON file updates, preventing data loss
+
 ## [v1.8.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.8.0) — Full Scrollback History
 
 ### New Features
