@@ -52,6 +52,10 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **MCP-aware monitoring** — ClaudyBro identifies MCP servers by inspecting command-line args via `KERN_PROCARGS2` — Shadcn, Brave Search, Playwright, Context7, and any `@scope/mcp-server-*` package are recognised. These are tagged with a green **MCP** badge in the process inspector and excluded from orphan detection entirely. When Claude exits, remaining MCP servers are cleaned up after a 15-second grace period (allowing Claude to restart without losing connections).
 
+- **Context usage status bar** — Live display of context window usage %, model name, session cost, and effort level directly in ClaudyBro's bottom status bar. Auto-configures Claude Code's statusLine on first launch — no setup needed.
+
+  ![Context Status Bar](Screenshots/context-status-bar.png)
+
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
 ## Features
@@ -66,6 +70,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
 | **MCP idle cleanup** | Idle MCP servers killed after 90s; Claude auto-restarts on demand; configurable timeout (0 to disable) |
 | **Auto-kill orphans** | Orphaned processes are automatically killed after 90s (configurable) with live countdown |
+| **Context status bar** | Live context %, model name, session cost, effort level, and bypass mode — auto-configured via statusLine bridge |
 | **Process monitor** | sysctl-based (no shell spawning), adaptive polling: 2s active / 5s normal / 15s idle |
 | **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
 | **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
