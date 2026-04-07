@@ -2,6 +2,16 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.9.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.9.1) — Pin Processes & UI Fixes
+
+### New Features
+- **Pin processes** — pinned processes are immune to auto-kill and MCP idle cleanup. Pin state persists across tabs and app restarts via config file.
+- **Pin button in process inspector** — toggle pin/unpin per process with a pin icon; pinned processes show a yellow "PINNED" badge.
+- **Editable stepper fields in Settings** — process monitor timeout fields now have a text input alongside the stepper for direct numeric entry.
+
+### Bug Fixes
+- **Fixed toolbar Run button hit area** — clicking on the icon or padding area of the primary Run button now works; previously only the text label was clickable.
+
 ## [v1.9.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.9.0) — Context Usage Status Bar
 
 ### New Features
