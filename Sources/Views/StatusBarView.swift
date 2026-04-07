@@ -228,9 +228,11 @@ struct ChildProcessPanel: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(processMonitor.childProcesses) { process in
-                            ChildProcessRow(process: process) {
+                            ChildProcessRow(process: process, onPin: {
+                                processMonitor.togglePin(for: process.pid)
+                            }, onKill: {
                                 processMonitor.killProcess(process.pid)
-                            }
+                            })
                             Divider().padding(.leading, 40)
                         }
                     }
@@ -246,6 +248,7 @@ struct ChildProcessPanel: View {
 
 struct ChildProcessRow: View {
     let process: TrackedProcess
+    let onPin: () -> Void
     let onKill: () -> Void
 
     var body: some View {
@@ -280,10 +283,29 @@ struct ChildProcessRow: View {
                             .background(Color.green.opacity(0.15))
                             .cornerRadius(3)
                     }
+
+                    if process.isPinned {
+                        Text("PINNED")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.yellow)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.yellow.opacity(0.15))
+                            .cornerRadius(3)
+                    }
                 }
             }
 
             Spacer()
+
+            Button(action: onPin) {
+                Image(systemName: process.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 14))
+                    .foregroundColor(process.isPinned ? .yellow : .gray.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .cursor(.pointingHand)
+            .help(process.isPinned ? "Unpin — allow auto-kill" : "Pin — prevent auto-kill")
 
             Button(action: onKill) {
                 Image(systemName: "xmark.circle.fill")

@@ -75,6 +75,24 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
+    /// Toggle pin state for a process by PID. Pinned processes are immune to auto-kill.
+    func togglePin(for pid: pid_t) {
+        guard let index = childProcesses.firstIndex(where: { $0.pid == pid }) else { return }
+        childProcesses[index].isPinned.toggle()
+
+        let description = childProcesses[index].processDescription
+        let config = AppConfiguration.shared
+        if childProcesses[index].isPinned {
+            if !config.pinnedProcessDescriptions.contains(description) {
+                config.pinnedProcessDescriptions.append(description)
+            }
+        } else {
+            config.pinnedProcessDescriptions.removeAll { $0 == description }
+        }
+        config.save()
+        NotificationCenter.default.post(name: .configurationChanged, object: nil)
+    }
+
     /// Kill all confirmed orphaned processes.
     func cleanupOrphans() {
         let pids = orphanedProcesses.map(\.pid)
@@ -118,6 +136,12 @@ final class ProcessMonitor: ObservableObject {
         autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
         mcpIdleTimeout = TimeInterval(config.mcpIdleKillSeconds)
 
+        // Sync pin states from config (cross-tab consistency)
+        let pinnedDescriptions = config.pinnedProcessDescriptions
+        for i in childProcesses.indices {
+            childProcesses[i].isPinned = pinnedDescriptions.contains(childProcesses[i].processDescription)
+        }
+
         // Re-schedule poll timer if interval changed
         if let existingTimer = timer, existingTimer.timeInterval != monitorInterval {
             existingTimer.invalidate()
@@ -157,7 +181,8 @@ final class ProcessMonitor: ObservableObject {
                     tracked.lastActiveTime = Date()
                 }
 
-                if mcpIdleTimeout > 0,
+                if !tracked.isPinned,
+                   mcpIdleTimeout > 0,
                    let lastActive = tracked.lastActiveTime,
                    Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
                 {
@@ -222,7 +247,7 @@ final class ProcessMonitor: ObservableObject {
             // CLI just disappeared — schedule MCP cleanup after grace period
             if mcpCleanupWorkItem == nil {
                 let shellPid = self.shellPID
-                let mcpPids = updated.filter(\.isMCPServer).map(\.pid)
+                let mcpPids = updated.filter { $0.isMCPServer && !$0.isPinned }.map(\.pid)
 
                 let workItem = DispatchWorkItem { [weak self] in
                     guard self != nil else { return }
@@ -244,7 +269,7 @@ final class ProcessMonitor: ObservableObject {
 
                     DispatchQueue.main.async { [weak self] in
                         self?.mcpCleanupWorkItem = nil
-                        self?.childProcesses.removeAll { $0.isMCPServer }
+                        self?.childProcesses.removeAll { $0.isMCPServer && !$0.isPinned }
                         self?.clearContextUsage()
                         NotificationCenter.default.post(
                             name: .cliProcessExited, object: nil,
@@ -268,7 +293,8 @@ final class ProcessMonitor: ObservableObject {
         var autoKilled: [pid_t] = []
         if autoKillTimeout > 0 {
             for orphan in orphans {
-                if let since = orphan.confirmedOrphanSince,
+                if !orphan.isPinned,
+                   let since = orphan.confirmedOrphanSince,
                    Date().timeIntervalSince(since) >= autoKillTimeout
                 {
                     kill(orphan.pid, SIGTERM)
@@ -363,6 +389,7 @@ final class ProcessMonitor: ObservableObject {
         // Expensive calls — done once per process, not every poll
         tracked.processDescription = ProcessTreeQuery.describeProcess(pid: entry.pid)
         tracked.isMCPServer = ProcessTreeQuery.isMCPServer(pid: entry.pid)
+        tracked.isPinned = AppConfiguration.shared.pinnedProcessDescriptions.contains(tracked.processDescription)
         if tracked.isMCPServer {
             tracked.lastActiveTime = Date()
         }

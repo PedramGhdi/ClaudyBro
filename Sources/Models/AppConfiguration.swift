@@ -17,6 +17,7 @@ final class AppConfiguration: ObservableObject {
     @Published var preferredDangerousMode: Bool = false
     @Published var mcpIdleKillSeconds: Int = 90
     @Published var disableAltScreen: Bool = true
+    @Published var pinnedProcessDescriptions: [String] = []
 
     var preferredProvider: CLIProvider? {
         CLIProvider(rawValue: preferredCLI)
@@ -44,6 +45,7 @@ final class AppConfiguration: ObservableObject {
             if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
             if let v = json["mcpIdleKillSeconds"] as? Int { mcpIdleKillSeconds = v }
             if let v = json["disableAltScreen"] as? Bool { disableAltScreen = v }
+            if let v = json["pinnedProcessDescriptions"] as? [String] { pinnedProcessDescriptions = v }
         } catch {
             // Ignore corrupt config — use defaults
         }
@@ -64,6 +66,7 @@ final class AppConfiguration: ObservableObject {
             "preferredDangerousMode": preferredDangerousMode,
             "mcpIdleKillSeconds": mcpIdleKillSeconds,
             "disableAltScreen": disableAltScreen,
+            "pinnedProcessDescriptions": pinnedProcessDescriptions,
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)

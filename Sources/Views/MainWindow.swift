@@ -139,6 +139,7 @@ struct LaunchToolbar: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .cursor(.pointingHand)
@@ -279,18 +280,18 @@ struct SettingsSheet: View {
                 Toggle("Full scrollback (disable alternate screen)", isOn: $config.disableAltScreen)
             }
             Section("Process Monitor") {
-                Stepper("Auto-kill orphans after: \(config.autoKillTimeoutSeconds)s",
-                        value: $config.autoKillTimeoutSeconds, in: 0...600, step: 10)
-                Stepper("Orphan timeout: \(config.orphanTimeoutSeconds)s",
-                        value: $config.orphanTimeoutSeconds, in: 5...300, step: 5)
-                Stepper("Monitor interval: \(config.processMonitorInterval)s",
-                        value: $config.processMonitorInterval, in: 1...30, step: 1)
-                Stepper("Kill idle MCP servers after: \(config.mcpIdleKillSeconds)s",
-                        value: $config.mcpIdleKillSeconds, in: 0...600, step: 30)
+                StepperField(label: "Auto-kill orphans after:",
+                             value: $config.autoKillTimeoutSeconds, range: 0...600, step: 10)
+                StepperField(label: "Orphan timeout:",
+                             value: $config.orphanTimeoutSeconds, range: 5...300, step: 5)
+                StepperField(label: "Monitor interval:",
+                             value: $config.processMonitorInterval, range: 1...30, step: 1)
+                StepperField(label: "Kill idle MCP servers after:",
+                             value: $config.mcpIdleKillSeconds, range: 0...600, step: 30)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 370)
+        .frame(width: 400, height: 400)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {
@@ -299,6 +300,34 @@ struct SettingsSheet: View {
                     dismiss()
                 }
             }
+        }
+    }
+}
+
+// MARK: - Stepper with Text Field
+
+private struct StepperField: View {
+    let label: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    var body: some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField("", value: $value, formatter: NumberFormatter())
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 60)
+                .multilineTextAlignment(.trailing)
+            Text("s")
+                .foregroundColor(.secondary)
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+        }
+        .onChange(of: value) { newValue in
+            if newValue < range.lowerBound { value = range.lowerBound }
+            if newValue > range.upperBound { value = range.upperBound }
         }
     }
 }
