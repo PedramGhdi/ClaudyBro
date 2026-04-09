@@ -1,6 +1,6 @@
 # ClaudyBro
 
-A lightweight, purpose-built macOS terminal for AI coding CLIs — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/anthropics/claude-code), and [OpenAI Codex CLI](https://github.com/openai/codex). Native Swift app with smart process management, image paste support, and a fraction of the footprint of general-purpose terminals.
+A lightweight, purpose-built macOS terminal for AI coding CLIs — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and [OpenAI Codex CLI](https://github.com/openai/codex). Native Swift app with smart process management, image paste support, and a fraction of the footprint of general-purpose terminals.
 
 ![ClaudyBro Screenshot](https://img.shields.io/badge/macOS-13.0+-blue) ![Swift](https://img.shields.io/badge/Swift-5.9+-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -12,7 +12,7 @@ Benchmarked on Apple Silicon (idle shell, no Claude running):
 |--------|-----------|---------|------|
 | **Memory (RSS)** | 68.5 MB | 80.9 MB | ~250 MB |
 | **CPU (idle)** | 0.0% | 0.0% | ~5% |
-| **Disk size** | 3.5 MB | 62 MB | 326 MB |
+| **Disk size** | 3.9 MB | 62 MB | 326 MB |
 | **Startup** | < 0.5s | ~ 0.5s | ~2s |
 
 With Claude Code running (idle, waiting for input):
@@ -22,7 +22,7 @@ With Claude Code running (idle, waiting for input):
 | **Memory (RSS)** | 81.9 MB | 139.8 MB | ~300 MB |
 | **CPU (idle)** | 0.0% | 0.0% | ~5% |
 
-ClaudyBro is **18x smaller than Ghostty** and **93x smaller than Warp** on disk, and uses **41% less memory** than Ghostty with Claude running.
+ClaudyBro is **16x smaller than Ghostty** and **84x smaller than Warp** on disk, and uses **41% less memory** than Ghostty with Claude running.
 
 ### Terminal Rendering Throughput
 
@@ -42,7 +42,7 @@ Fast rendering means less PTY backpressure on Claude's output stream — tokens 
 
 Standard terminals work fine with Claude Code, but have friction points that add up:
 
-- **Image paste** — Claude Code can't receive images from the clipboard in most terminals. ClaudyBro intercepts Cmd+V, detects image data, saves it to a temp file, and injects the path into your prompt. Just copy a screenshot and paste.
+- **Image paste** — AI CLIs can't receive images from the clipboard in most terminals. ClaudyBro intercepts Cmd+V, detects image data, and sends the right signal for any CLI to handle it. Just copy a screenshot and paste.
 
 - **Process inspector** — Click the child process count in the status bar to see every process Claude has spawned — name, PID, memory usage, and whether it's an MCP server. No more guessing what's running.
 
@@ -56,14 +56,20 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
 
+- **Gemini CLI support** — Synchronous PTY writes prevent terminal response leaks that crash Gemini. The orphan monitor detects and protects the active CLI's process tree, so Gemini's child processes aren't mistakenly killed.
+
+- **Smart CLI switching** — If Claude is running and you click "Gemini" in the dropdown, it kills the running CLI (SIGTERM), waits for it to exit, then launches the new one. No more typing into the wrong session.
+
+- **Custom ANSI palette** — Tuned 16-color ANSI palette matching the dark theme, so CLI tool UI blocks (code areas, status bars) blend seamlessly with the background. No more visible color bands.
+
 ## Features
 
 | Feature | Details |
 |---------|---------|
 | **Terminal engine** | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (LocalProcessTerminalView) |
-| **Image paste** | Cmd+V detects clipboard images, saves to `/tmp/claudybro/`, injects path |
+| **Image paste** | Cmd+V detects clipboard images, sends Ctrl+V for any CLI to handle |
 | **File drop** | Drag PNG/JPG/PDF/SVG onto the terminal to inject file paths |
-| **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, directory in tab title |
+| **Tabs** | Cmd+T new, Cmd+W close, Cmd+1..9 direct select, Cmd+Shift+]/[ cycle, drag to reorder, directory in tab title |
 | **Process inspector** | Click child process count to see all processes with PID, memory, and MCP badges |
 | **Orphan panel** | Click the status bar warning to see each orphan's description, PID, memory, idle time, and auto-kill countdown |
 | **MCP idle cleanup** | Idle MCP servers killed after 90s; Claude auto-restarts on demand; configurable timeout (0 to disable) |
@@ -71,6 +77,8 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Context status bar** | Live context %, model name, session cost, effort level, and bypass mode — auto-configured via statusLine bridge |
 | **Process monitor** | sysctl-based (no shell spawning), adaptive polling: 2s active / 5s normal / 15s idle |
 | **Multi-CLI launcher** | Split-button toolbar for Claude, Gemini CLI, and Codex CLI with one-click run + dropdown for all options |
+| **Smart CLI switching** | Kills running CLI (SIGTERM), waits for exit, then launches new one — no stale sessions |
+| **ANSI color palette** | Custom 16-color palette tuned for dark theme — no color band artifacts |
 | **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
@@ -135,7 +143,7 @@ brew install --cask claudybro
 ## Architecture
 
 ```
-ClaudyBro.app (3.7 MB)
+ClaudyBro.app (3.9 MB)
 ├── SwiftUI Shell
 │   ├── TabManager          — Multi-tab terminal sessions
 │   ├── LaunchToolbar       — Split-button CLI launcher (Claude/Gemini/Codex)
@@ -188,7 +196,7 @@ Settings are stored at `~/.config/claudybro/config.json`:
 
 - macOS 13.0 (Ventura) or later
 - Apple Silicon or Intel Mac
-- At least one AI CLI installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/anthropics/claude-code), or [OpenAI Codex CLI](https://github.com/openai/codex) (or npx available)
+- At least one AI CLI installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [OpenAI Codex CLI](https://github.com/openai/codex) (or npx available)
 
 ## Tech Stack
 
