@@ -93,6 +93,9 @@ final class CLIProcessManager: ObservableObject {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
+        // Tell applications we're a dark terminal (light fg on dark bg)
+        // without requiring OSC 10/11 color queries
+        env["COLORFGBG"] = "15;0"
         return env.map { "\($0.key)=\($0.value)" }
     }
 }

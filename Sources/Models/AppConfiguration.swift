@@ -45,6 +45,7 @@ final class AppConfiguration: ObservableObject {
             if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
             if let v = json["mcpIdleKillSeconds"] as? Int { mcpIdleKillSeconds = v }
             if let v = json["disableAltScreen"] as? Bool { disableAltScreen = v }
+
             if let v = json["pinnedProcessDescriptions"] as? [String] { pinnedProcessDescriptions = v }
         } catch {
             // Ignore corrupt config — use defaults

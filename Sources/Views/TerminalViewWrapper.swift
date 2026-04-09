@@ -32,6 +32,13 @@ struct TerminalViewWrapper: NSViewRepresentable {
             pm.shellPID = pid
             pm.isRunning = true
             processMonitor?.startMonitoring(shellPID: pid)
+
+            // Create a duplicate fd for synchronous writes.
+            // SwiftTerm uses DispatchIO on childfd for reads — mixing direct write()
+            // calls on the same fd causes undefined behavior. A dup'd fd is a separate
+            // fd number so DispatchIO isn't affected, while writes still reach the PTY.
+            let masterFd = tv.process.childfd
+            if masterFd >= 0 { tv.writeFd = dup(masterFd) }
         }
 
         return terminalView
@@ -118,6 +125,8 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     private var linkDelegate: LinkSanitizingDelegate?
     private let altScreenFilter = AltScreenFilter()
     private var contextScanScheduled = false
+    /// Duplicate fd for synchronous writes — avoids conflicting with DispatchIO on the original fd.
+    var writeFd: Int32 = -1
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -148,8 +157,31 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
+        if writeFd >= 0 { close(writeFd) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Synchronized PTY Writes
+
+    /// Bypass SwiftTerm's DispatchIO.write (which races with reads on a separate GCD queue)
+    /// and write synchronously to a dup'd fd. This matches Ghostty's serialized I/O model,
+    /// preventing terminal responses from leaking into the shell as plaintext.
+    override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        let fd = writeFd
+        guard fd >= 0 else {
+            super.send(source: source, data: data)
+            return
+        }
+        data.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return }
+            var written = 0
+            while written < ptr.count {
+                let n = Darwin.write(fd, base + written, ptr.count - written)
+                if n <= 0 { break }
+                written += n
+            }
+        }
     }
 
     // MARK: - Commands & State
@@ -285,6 +317,10 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
         altScreenFilter.isEnabled = AppConfiguration.shared.disableAltScreen
+
+        // Install ANSI palette matching our dark theme so CLI tools' colored
+        // UI blocks (code areas, status bars) blend with the background.
+        installColors(Constants.ansiPalette)
     }
 
     // MARK: - Focus management
