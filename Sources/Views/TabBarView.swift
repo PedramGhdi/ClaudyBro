@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// macOS Terminal-style tab strip for terminal sessions.
+/// macOS Terminal-style tab strip with drag-to-reorder.
 struct TabBarView: View {
     @ObservedObject var tabManager: TabManager
+    @State private var draggedTabId: UUID?
+    @State private var dropTargetIndex: Int?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -12,9 +14,21 @@ struct TabBarView: View {
                     index: index + 1,
                     isActive: tab.id == tabManager.activeTabId,
                     canClose: tabManager.tabs.count > 1,
+                    isDragTarget: dropTargetIndex == index && draggedTabId != tab.id,
                     onSelect: { tabManager.selectTab(id: tab.id) },
                     onClose: { tabManager.requestCloseTab(id: tab.id) }
                 )
+                .opacity(draggedTabId == tab.id ? 0.4 : 1.0)
+                .onDrag {
+                    draggedTabId = tab.id
+                    return NSItemProvider(object: tab.id.uuidString as NSString)
+                }
+                .onDrop(of: [.text], delegate: TabDropDelegate(
+                    tabManager: tabManager,
+                    targetIndex: index,
+                    draggedTabId: $draggedTabId,
+                    dropTargetIndex: $dropTargetIndex
+                ))
 
                 // Separator between tabs
                 if index < tabManager.tabs.count - 1 {
@@ -41,6 +55,44 @@ struct TabBarView: View {
     }
 }
 
+// MARK: - Drop Delegate
+
+private struct TabDropDelegate: DropDelegate {
+    let tabManager: TabManager
+    let targetIndex: Int
+    @Binding var draggedTabId: UUID?
+    @Binding var dropTargetIndex: Int?
+
+    func dropEntered(info: DropInfo) {
+        dropTargetIndex = targetIndex
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let draggedId = draggedTabId,
+              let sourceIndex = tabManager.tabs.firstIndex(where: { $0.id == draggedId })
+        else { return false }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            tabManager.moveTab(from: sourceIndex, to: targetIndex)
+        }
+        draggedTabId = nil
+        dropTargetIndex = nil
+        return true
+    }
+
+    func dropExited(info: DropInfo) {
+        dropTargetIndex = nil
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedTabId != nil
+    }
+}
+
 // MARK: - Single Tab Item
 
 private struct TabItem: View {
@@ -48,6 +100,7 @@ private struct TabItem: View {
     let index: Int
     let isActive: Bool
     let canClose: Bool
+    var isDragTarget: Bool = false
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -104,19 +157,12 @@ private struct TabItem: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundColor(isActive ? .white : Color(nsColor: Constants.statusTextColor))
         .background(
-            Group {
-                if isActive {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 3)
-                } else if isHovered {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 3)
-                }
-            }
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.white.opacity(
+                    isDragTarget ? 0.15 : isActive ? 0.12 : isHovered ? 0.05 : 0
+                ))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
         )
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }

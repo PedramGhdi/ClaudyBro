@@ -163,6 +163,40 @@ final class ProcessMonitor: ObservableObject {
         var orphans: [TrackedProcess] = []
         var mcpKilled: [pid_t] = []
 
+        // Find the active CLI and build a set of PIDs in its subtree.
+        // Only these are protected from orphan/MCP killing — other node
+        // processes outside the CLI's tree are still cleaned up normally.
+        let cliKeywords = CLIProvider.allCases.map(\.processKeyword)
+        var activeCLI: CLIProvider?
+        var cliPid: pid_t = 0
+        for provider in CLIProvider.allCases {
+            let keyword = provider.processKeyword
+            for entry in descendants {
+                let desc = (childProcesses.first(where: { $0.pid == entry.pid })?.processDescription
+                    ?? ProcessTreeQuery.describeProcess(pid: entry.pid)).lowercased()
+                if desc.contains(keyword) {
+                    activeCLI = provider
+                    cliPid = entry.pid
+                    break
+                }
+            }
+            if activeCLI != nil { break }
+        }
+        let cliStillRunning = activeCLI != nil
+
+        // Build set of PIDs owned by the CLI (the CLI itself + its descendants)
+        var cliOwnedPids = Set<pid_t>()
+        if cliPid > 0 {
+            cliOwnedPids.insert(cliPid)
+            for entry in descendants where entry.parentPid == cliPid {
+                cliOwnedPids.insert(entry.pid)
+            }
+            // Also include grandchildren (CLI → child → grandchild)
+            for entry in descendants where cliOwnedPids.contains(entry.parentPid) {
+                cliOwnedPids.insert(entry.pid)
+            }
+        }
+
         for entry in descendants {
             // Reuse existing tracked entry or create new
             var tracked = childProcesses.first(where: { $0.pid == entry.pid })
@@ -172,6 +206,7 @@ final class ProcessMonitor: ObservableObject {
 
             if tracked.isMCPServer {
                 // MCP idle kill: track CPU to detect idle servers, kill after timeout
+                // Skip when a CLI is running — it manages its own MCP lifecycle
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
@@ -186,13 +221,12 @@ final class ProcessMonitor: ObservableObject {
                    let lastActive = tracked.lastActiveTime,
                    Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
                 {
-                    // MCP server idle too long — kill it, Claude will restart on demand
                     kill(entry.pid, SIGTERM)
                     mcpKilled.append(entry.pid)
                     continue // don't add to updated
                 }
-            } else if tracked.isNodeProcess {
-                // Orphan detection for non-MCP node processes
+            } else if !cliOwnedPids.contains(entry.pid), tracked.isNodeProcess {
+                // Orphan detection — skip for processes owned by the active CLI
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
@@ -236,12 +270,7 @@ final class ProcessMonitor: ObservableObject {
             }
         }
 
-        // Detect CLI exit — schedule deferred MCP cleanup with grace period
-        let cliKeywords = CLIProvider.allCases.map(\.processKeyword)
-        let cliStillRunning = updated.contains { proc in
-            let desc = proc.processDescription.lowercased()
-            return cliKeywords.contains { desc.contains($0) }
-        }
+        // Handle CLI exit — schedule deferred MCP cleanup with grace period
 
         if cliWasRunning && !cliStillRunning && !updated.isEmpty {
             // CLI just disappeared — schedule MCP cleanup after grace period
@@ -316,8 +345,8 @@ final class ProcessMonitor: ObservableObject {
         // (descendants like MCP servers may have different CWDs)
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
-        // Read context usage from statusline JSON (only when CLI active, only if file changed)
-        let newContextUsage: ContextUsage? = cliStillRunning ? pollContextFile() : nil
+        // Read context usage from statusline JSON (Claude-specific, skip for other CLIs)
+        let newContextUsage: ContextUsage? = (activeCLI == .claude) ? pollContextFile() : nil
 
         // Adaptive poll interval: fast when CLI active, slow when fully idle
         adjustPollInterval(cliActive: cliStillRunning)
@@ -326,7 +355,11 @@ final class ProcessMonitor: ObservableObject {
             self?.childProcesses = updated
             self?.orphanedProcesses = orphans
             if cwd != self?.currentDirectory { self?.currentDirectory = cwd }
-            if let ctx = newContextUsage { self?.updateContextUsage(ctx) }
+            if let ctx = newContextUsage {
+                self?.updateContextUsage(ctx)
+            } else if activeCLI != .claude {
+                self?.clearContextUsage()
+            }
         }
     }
 

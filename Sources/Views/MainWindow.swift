@@ -15,7 +15,8 @@ struct MainWindow: View {
             if let tab = tabManager.activeTab {
                 LaunchToolbar(
                     processManager: tab.processManager,
-                    processMonitor: tab.processMonitor
+                    processMonitor: tab.processMonitor,
+                    hasRunningCLI: tab.hasAnyCLIRunning
                 )
             }
 
@@ -89,6 +90,7 @@ struct MainWindow: View {
 struct LaunchToolbar: View {
     @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
+    var hasRunningCLI: Bool = false
 
     @ObservedObject private var config = AppConfiguration.shared
 
@@ -244,10 +246,44 @@ struct LaunchToolbar: View {
             command = provider.launchCommand
         }
         command += "\n"
-        NotificationCenter.default.post(
-            name: .sendTerminalCommand, object: nil,
-            userInfo: ["command": command]
-        )
+
+        // If a CLI is already running, kill it first (Ctrl+C), then launch the new one
+        let keywords = CLIProvider.allCases.map(\.processKeyword)
+        let cliRunning = processMonitor.childProcesses.contains { proc in
+            let desc = proc.processDescription.lowercased()
+            return keywords.contains { desc.contains($0) }
+        }
+        if cliRunning {
+            // Kill the running CLI process and wait for it to exit before launching new one
+            var cliPids: [pid_t] = []
+            for proc in processMonitor.childProcesses {
+                let desc = proc.processDescription.lowercased()
+                if keywords.contains(where: { desc.contains($0) }) {
+                    kill(proc.pid, SIGTERM)
+                    cliPids.append(proc.pid)
+                }
+            }
+            // Poll until the CLI process is gone, then send the new command
+            DispatchQueue.global(qos: .userInitiated).async {
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline {
+                    if cliPids.allSatisfy({ !ProcessTreeQuery.isProcessAlive($0) }) { break }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                Thread.sleep(forTimeInterval: 0.2) // Let shell settle
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .sendTerminalCommand, object: nil,
+                        userInfo: ["command": command]
+                    )
+                }
+            }
+        } else {
+            NotificationCenter.default.post(
+                name: .sendTerminalCommand, object: nil,
+                userInfo: ["command": command]
+            )
+        }
     }
 }
 

@@ -117,6 +117,15 @@ final class TabManager: ObservableObject {
         activeTabId = tabs[index].id
     }
 
+    func moveTab(from source: Int, to destination: Int) {
+        guard source != destination,
+              source >= 0, source < tabs.count,
+              destination >= 0, destination < tabs.count
+        else { return }
+        let tab = tabs.remove(at: source)
+        tabs.insert(tab, at: destination)
+    }
+
     // MARK: - Private
 
     private func showCloseConfirmation(message: String, info: String) -> Bool {
