@@ -347,6 +347,15 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         }
 
         switch chars {
+        case "v": // Cmd+V — if clipboard has image but no text, send Ctrl+V so CLI handles paste
+            let pb = NSPasteboard.general
+            let hasText = pb.string(forType: .string) != nil
+            let hasImage = pb.types?.contains(where: { [.png, .tiff, .fileURL].contains($0) }) ?? false
+            if !hasText && hasImage {
+                send(txt: "\u{16}") // Ctrl+V — CLI reads clipboard itself
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
         case "w": // Intercept Cmd+W to prevent default window close
             NotificationCenter.default.post(name: .closeTab, object: nil)
             return true

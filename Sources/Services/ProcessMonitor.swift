@@ -216,8 +216,7 @@ final class ProcessMonitor: ObservableObject {
                     tracked.lastActiveTime = Date()
                 }
 
-                if !cliOwnedPids.contains(entry.pid),
-                   !tracked.isPinned,
+                if !tracked.isPinned,
                    mcpIdleTimeout > 0,
                    let lastActive = tracked.lastActiveTime,
                    Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
