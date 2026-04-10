@@ -2,6 +2,26 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.10.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.10.0) — Gemini CLI Support, OSC Leak Fix & Tab Reordering
+
+### New Features
+- **Tab drag-to-reorder** — drag tabs left or right to rearrange them, with a visual drop indicator highlighting the target slot and a smooth reorder animation.
+- **Kill running CLI before launching another** — switching CLIs via the toolbar dropdown now SIGTERM-kills the currently running CLI, waits up to 5 seconds for it to exit, then launches the new one. No more stacking Claude on top of Gemini.
+- **Cmd+V image paste for all CLIs** — when the clipboard contains an image but no text, Cmd+V now sends Ctrl+V so the CLI (Gemini, Claude, etc.) can handle the paste via its own clipboard detection.
+- **ANSI palette tuned for dark theme** — installed a 16-color ANSI palette where color 0 (black) matches the dark navy background (#1a1a2e), eliminating visible bands in CLI UI blocks, code areas, and status bars.
+- **COLORFGBG environment variable** — CLIs now receive `COLORFGBG=15;0` as a dark-mode hint, so tools that don't issue OSC 10/11 color queries still render their dark theme correctly.
+
+### Bug Fixes
+- **Fixed OSC color query responses leaking into the shell** — terminal responses like `rgb:1a1c/1a1c/2e14` and `command not found: 11` were appearing as plaintext in the shell prompt.
+  - Root cause 1: SwiftTerm's async `DispatchIO.write` on the PTY fd raced with its own read loop on the same fd. Overridden with synchronous `Darwin.write` on a dup'd fd to serialize I/O, matching Ghostty's model.
+  - Root cause 2: Some OSC 4/10/11/12 color query responses still leaked despite sync writes. Added `OSCResponseFilter` to suppress only those specific codes while letting DA, cursor position, DCS, clipboard, and title reports pass through so CLI tools still get proper terminal capability detection.
+- **Fixed orphan killer breaking Gemini CLI** — Gemini spawns child Node processes that appear idle and were being auto-killed after 30 seconds, producing `read EIO` crashes. The process monitor now builds a set of PIDs owned by the active CLI's subtree (CLI + children + grandchildren) and exempts them from orphan detection, while still cleaning up unrelated Node processes outside the CLI tree.
+- **Fixed context status bar showing stale Claude data for other CLIs** — model name, effort level, and session cost now only display during Claude sessions and clear when Gemini or Codex is running.
+
+### Improvements
+- **MCP idle kill still runs while CLI is active** — only orphan detection respects the CLI subtree protection; MCP servers are still killed after their idle timeout regardless of which CLI owns them, since Claude Code restarts them on demand.
+- **Active CLI detection rewritten** — the process monitor now identifies the active CLI by walking the descendant tree and matching against `CLIProvider.processKeyword`, replacing the previous string scan over the updated tracked list.
+
 ## [v1.9.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.9.1) — Pin Processes & UI Fixes
 
 ### New Features
