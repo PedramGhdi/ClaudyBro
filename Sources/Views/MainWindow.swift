@@ -15,8 +15,7 @@ struct MainWindow: View {
             if let tab = tabManager.activeTab {
                 LaunchToolbar(
                     processManager: tab.processManager,
-                    processMonitor: tab.processMonitor,
-                    hasRunningCLI: tab.hasAnyCLIRunning
+                    processMonitor: tab.processMonitor
                 )
             }
 
@@ -90,7 +89,6 @@ struct MainWindow: View {
 struct LaunchToolbar: View {
     @ObservedObject var processManager: CLIProcessManager
     @ObservedObject var processMonitor: ProcessMonitor
-    var hasRunningCLI: Bool = false
 
     @ObservedObject private var config = AppConfiguration.shared
 
@@ -318,12 +316,16 @@ struct SettingsSheet: View {
             Section("Process Monitor") {
                 StepperField(label: "Auto-kill orphans after:",
                              value: $config.autoKillTimeoutSeconds, range: 0...600, step: 10)
+                Text("0s = kill immediately once an orphan is confirmed")
+                    .font(.caption).foregroundColor(.secondary)
                 StepperField(label: "Orphan timeout:",
                              value: $config.orphanTimeoutSeconds, range: 5...300, step: 5)
                 StepperField(label: "Monitor interval:",
                              value: $config.processMonitorInterval, range: 1...30, step: 1)
                 StepperField(label: "Kill idle MCP servers after:",
                              value: $config.mcpIdleKillSeconds, range: 0...600, step: 30)
+                Text("Kills MCPs with no CPU activity for this long. Claude auto-restarts them on next tool call. 0s = kill as soon as idle.")
+                    .font(.caption).foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)

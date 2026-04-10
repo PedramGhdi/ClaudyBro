@@ -124,11 +124,24 @@ enum ProcessTreeQuery {
         let args = getProcessArgs(pid: pid)
         let joined = args.joined(separator: " ").lowercased()
 
+        // Is this an npm/npx/yarn wrapper launching something else? The wrapper
+        // and the actual spawned process BOTH carry the target name in their
+        // args (e.g. `npm exec shadcn@latest mcp` and the resulting `node …/bin`
+        // both match "shadcn"). Without a suffix they look like duplicates in
+        // the popover. Distinguish them so the user can tell which is the
+        // wrapper and which is the real server.
+        let firstBase = args.first.map {
+            URL(fileURLWithPath: $0).lastPathComponent.lowercased()
+        } ?? ""
+        let isWrapper = firstBase == "npm" || firstBase == "npx"
+            || firstBase == "yarn" || firstBase == "bun" || firstBase == "pnpm"
+        let wrapperSuffix = isWrapper ? " (wrapper)" : ""
+
         // MCP servers
-        if joined.contains("shadcn") { return "Shadcn UI MCP Server" }
-        if joined.contains("brave-search") { return "Brave Search MCP Server" }
-        if joined.contains("playwright") || joined.contains("@playwright") { return "Playwright MCP Server" }
-        if joined.contains("context7") { return "Context7 MCP Server" }
+        if joined.contains("shadcn") { return "Shadcn UI MCP Server\(wrapperSuffix)" }
+        if joined.contains("brave-search") { return "Brave Search MCP Server\(wrapperSuffix)" }
+        if joined.contains("playwright") || joined.contains("@playwright") { return "Playwright MCP Server\(wrapperSuffix)" }
+        if joined.contains("context7") { return "Context7 MCP Server\(wrapperSuffix)" }
         if joined.contains("mcp") {
             // Try to extract a meaningful name from @scope/package-name in args
             for arg in args {
@@ -142,10 +155,10 @@ enum ProcessTreeQuery {
                     let capitalized = cleaned.split(separator: "-")
                         .map { $0.prefix(1).uppercased() + $0.dropFirst() }
                         .joined(separator: " ")
-                    return "\(capitalized) MCP Server"
+                    return "\(capitalized) MCP Server\(wrapperSuffix)"
                 }
             }
-            return "MCP Server"
+            return "MCP Server\(wrapperSuffix)"
         }
 
         // Language servers / tools

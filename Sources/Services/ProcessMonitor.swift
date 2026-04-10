@@ -9,6 +9,8 @@ final class ProcessMonitor: ObservableObject {
     @Published var orphanedProcesses: [TrackedProcess] = []
     @Published var currentDirectory: String = ""
     @Published var contextUsage: ContextUsage = ContextUsage()
+    /// Cached CLI state — set by background poll, read by main thread. Avoids expensive sysctl on render.
+    @Published var activeCLI: CLIProvider? = nil
 
     var monitorInterval: TimeInterval = 5
     var orphanTimeout: TimeInterval = 30
@@ -26,6 +28,11 @@ final class ProcessMonitor: ObservableObject {
     private var idlePollStreak: Int = 0
     private var activeInterval: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
+    /// Accumulates every PID seen in the active CLI's subtree across polls.
+    /// Used at CLI-exit cleanup to kill the entire former subtree (npm, head,
+    /// node helpers — not just MCP servers). Reset when cleanup completes or
+    /// when a new CLI session begins.
+    private var cliSubtreeSnapshot: Set<pid_t> = []
 
     init() {
         NotificationCenter.default.publisher(for: .killOrphanProcesses)
@@ -60,6 +67,7 @@ final class ProcessMonitor: ObservableObject {
         timer = nil
         mcpCleanupWorkItem?.cancel()
         mcpCleanupWorkItem = nil
+        cliSubtreeSnapshot.removeAll()
         childProcesses = []
         orphanedProcesses = []
     }
@@ -70,7 +78,9 @@ final class ProcessMonitor: ObservableObject {
         DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
             if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // Re-poll on the background queue — poll() uses main.sync for its snapshot,
+        // so invoking it from the main thread would deadlock.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.poll()
         }
     }
@@ -106,7 +116,7 @@ final class ProcessMonitor: ObservableObject {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.poll()
         }
     }
@@ -156,57 +166,91 @@ final class ProcessMonitor: ObservableObject {
     // MARK: - Private
 
     private func poll() {
+        // poll() takes a snapshot via main.sync below, so it must run off-main.
+        // Guard against accidental main invocation (e.g. from Timer callbacks or
+        // post-kill re-polls) by bouncing to the utility queue.
+        if Thread.isMainThread {
+            DispatchQueue.global(qos: .utility).async { [weak self] in self?.poll() }
+            return
+        }
+
         guard shellPID > 0 else { return }
 
         let descendants = ProcessTreeQuery.getDescendantProcesses(of: shellPID)
+
+        // Thread-safe snapshot of tracked state for O(1) lookup during this poll.
+        // Previously we read `childProcesses` directly from the background thread
+        // while the main thread published updates to it — an exclusive-access
+        // violation that crashed the app once the process list grew large.
+        var cache: [pid_t: TrackedProcess] = [:]
+        DispatchQueue.main.sync {
+            cache.reserveCapacity(childProcesses.count)
+            for proc in childProcesses { cache[proc.pid] = proc }
+        }
+
         var updated: [TrackedProcess] = []
+        updated.reserveCapacity(descendants.count)
         var orphans: [TrackedProcess] = []
         var mcpKilled: [pid_t] = []
 
         // Find the active CLI and build a set of PIDs in its subtree.
         // Only these are protected from orphan/MCP killing — other node
         // processes outside the CLI's tree are still cleaned up normally.
+        // Single pass: describe each PID at most once, reusing cached descriptions.
         let cliKeywords = CLIProvider.allCases.map(\.processKeyword)
-        var activeCLI: CLIProvider?
+        var detectedCLI: CLIProvider?
         var cliPid: pid_t = 0
-        for provider in CLIProvider.allCases {
-            let keyword = provider.processKeyword
-            for entry in descendants {
-                let desc = (childProcesses.first(where: { $0.pid == entry.pid })?.processDescription
-                    ?? ProcessTreeQuery.describeProcess(pid: entry.pid)).lowercased()
-                if desc.contains(keyword) {
-                    activeCLI = provider
-                    cliPid = entry.pid
-                    break
-                }
+        cliScan: for entry in descendants {
+            let desc = (cache[entry.pid]?.processDescription
+                ?? ProcessTreeQuery.describeProcess(pid: entry.pid)).lowercased()
+            for provider in CLIProvider.allCases where desc.contains(provider.processKeyword) {
+                detectedCLI = provider
+                cliPid = entry.pid
+                break cliScan
             }
-            if activeCLI != nil { break }
         }
-        let cliStillRunning = activeCLI != nil
+        let cliStillRunning = detectedCLI != nil
 
-        // Build set of PIDs owned by the CLI (the CLI itself + its descendants)
+        // Build set of PIDs owned by the CLI (the CLI itself + every descendant
+        // at any depth). Iterative BFS over the in-memory `descendants` snapshot —
+        // no extra sysctl calls. Repeats until the set stops growing so deep
+        // chains like CLI → bash → npm → node → grandchild are fully captured.
         var cliOwnedPids = Set<pid_t>()
         if cliPid > 0 {
             cliOwnedPids.insert(cliPid)
-            for entry in descendants where entry.parentPid == cliPid {
-                cliOwnedPids.insert(entry.pid)
+            var changed = true
+            while changed {
+                changed = false
+                for entry in descendants
+                    where !cliOwnedPids.contains(entry.pid)
+                    && cliOwnedPids.contains(entry.parentPid)
+                {
+                    cliOwnedPids.insert(entry.pid)
+                    changed = true
+                }
             }
-            // Also include grandchildren (CLI → child → grandchild)
-            for entry in descendants where cliOwnedPids.contains(entry.parentPid) {
-                cliOwnedPids.insert(entry.pid)
-            }
+            // Persist across polls so transient pids aren't lost between snapshots.
+            cliSubtreeSnapshot.formUnion(cliOwnedPids)
         }
 
         for entry in descendants {
-            // Reuse existing tracked entry or create new
-            var tracked = childProcesses.first(where: { $0.pid == entry.pid })
-                ?? createTrackedProcess(from: entry)
+            // Reuse existing tracked entry from the snapshot cache or create new
+            var tracked = cache[entry.pid] ?? createTrackedProcess(from: entry)
 
             tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
             if tracked.isMCPServer {
-                // MCP idle kill: track CPU to detect idle servers, kill after timeout
-                // Skip when a CLI is running — it manages its own MCP lifecycle
+                // MCP idle kill: track CPU to detect idle servers, kill after
+                // the user-configured timeout — regardless of whether a CLI is
+                // running. The `isIdleNow` check (cpuDelta < 0.01 since the
+                // previous poll) protects MCPs that are actively serving tool
+                // calls: any real work bumps `lastActiveTime` and resets the
+                // idle counter. Killed MCPs are auto-restarted by Claude Code /
+                // Gemini on the next tool call, so this is safe.
+                //
+                // mcpIdleTimeout == 0 means "kill on the first poll where
+                // CPU is idle". A freshly-spawned MCP's previousCPUTime == 0
+                // makes isIdleNow false, giving it at least one poll of grace.
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
@@ -215,9 +259,10 @@ final class ProcessMonitor: ObservableObject {
                 if cpuDelta > 0.01 || tracked.previousCPUTime == 0 {
                     tracked.lastActiveTime = Date()
                 }
+                let isIdleNow = tracked.previousCPUTime > 0 && cpuDelta < 0.01
 
                 if !tracked.isPinned,
-                   mcpIdleTimeout > 0,
+                   isIdleNow,
                    let lastActive = tracked.lastActiveTime,
                    Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
                 {
@@ -225,8 +270,10 @@ final class ProcessMonitor: ObservableObject {
                     mcpKilled.append(entry.pid)
                     continue // don't add to updated
                 }
-            } else if !cliOwnedPids.contains(entry.pid), tracked.isNodeProcess {
-                // Orphan detection — skip for processes owned by the active CLI
+            } else if !cliOwnedPids.contains(entry.pid) {
+                // Orphan detection — applies to ANY non-MCP descendant not owned
+                // by the active CLI. Previously restricted to `isNodeProcess`,
+                // which left npm/head/shell-helpers leaking on CLI exit.
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
@@ -270,13 +317,19 @@ final class ProcessMonitor: ObservableObject {
             }
         }
 
-        // Handle CLI exit — schedule deferred MCP cleanup with grace period
-
-        if cliWasRunning && !cliStillRunning && !updated.isEmpty {
-            // CLI just disappeared — schedule MCP cleanup after grace period
+        // Handle CLI exit — schedule full subtree cleanup after grace period.
+        // We kill EVERY pid that was ever in the CLI's subtree (snapshot accumulated
+        // across polls while it was running), not just MCP servers — so npm, head,
+        // node helpers, and shell pipelines spawned under the CLI all get reaped.
+        // Gate on the snapshot, not `updated`: leaked descendants might already be
+        // gone from this poll's tracked list but still alive as orphans.
+        if cliWasRunning && !cliStillRunning && !cliSubtreeSnapshot.isEmpty {
             if mcpCleanupWorkItem == nil {
                 let shellPid = self.shellPID
-                let mcpPids = updated.filter { $0.isMCPServer && !$0.isPinned }.map(\.pid)
+                // Snapshot the tracked pin state so we don't kill pinned entries.
+                // Keyed by pid for O(1) lookup inside the work item.
+                let pinnedPids = Set(updated.filter(\.isPinned).map(\.pid))
+                let snapshotPids = cliSubtreeSnapshot
 
                 let workItem = DispatchWorkItem { [weak self] in
                     guard self != nil else { return }
@@ -289,17 +342,26 @@ final class ProcessMonitor: ObservableObject {
                     }
                     guard !cliBack else { return }
 
-                    for pid in mcpPids { kill(pid, SIGTERM) }
+                    // Kill list = snapshot ∩ alive ∩ not pinned. Intersecting with
+                    // currently-alive pids guards against killing pids the OS reused
+                    // for unrelated processes after the CLI's children exited.
+                    let killPids = snapshotPids.filter { pid in
+                        !pinnedPids.contains(pid) && ProcessTreeQuery.isProcessAlive(pid)
+                    }
+
+                    for pid in killPids { kill(pid, SIGTERM) }
                     DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                        for pid in mcpPids {
+                        for pid in killPids {
                             if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
                         }
                     }
 
                     DispatchQueue.main.async { [weak self] in
-                        self?.mcpCleanupWorkItem = nil
-                        self?.childProcesses.removeAll { $0.isMCPServer && !$0.isPinned }
-                        self?.clearContextUsage()
+                        guard let self = self else { return }
+                        self.mcpCleanupWorkItem = nil
+                        self.childProcesses.removeAll { snapshotPids.contains($0.pid) && !$0.isPinned }
+                        self.cliSubtreeSnapshot.removeAll()
+                        self.clearContextUsage()
                         NotificationCenter.default.post(
                             name: .cliProcessExited, object: nil,
                             userInfo: ["shellPid": shellPid]
@@ -312,33 +374,40 @@ final class ProcessMonitor: ObservableObject {
                 )
             }
         } else if cliStillRunning {
-            // CLI is (still/again) running — cancel any pending MCP cleanup
+            // CLI is (still/again) running — cancel any pending cleanup.
+            // IMPORTANT: do NOT reset cliSubtreeSnapshot here. If the user
+            // bounced Claude within the grace period, the previous run's MCP
+            // servers may still be alive (reparented under the shell) but
+            // unreachable from the new cliPid — they won't be in cliOwnedPids.
+            // Keeping the old accumulated snapshot ensures they still get
+            // killed on the NEXT CLI exit. Clearing here is how the duplicate
+            // MCP leak happens.
             mcpCleanupWorkItem?.cancel()
             mcpCleanupWorkItem = nil
         }
         cliWasRunning = cliStillRunning
 
-        // Auto-kill orphans that exceeded the auto-kill timeout
+        // Auto-kill orphans that exceeded the auto-kill timeout.
+        // autoKillTimeout == 0 means "kill immediately on the first poll
+        // after the orphan is confirmed" (the inner `>=` already handles this).
         var autoKilled: [pid_t] = []
-        if autoKillTimeout > 0 {
-            for orphan in orphans {
-                if !orphan.isPinned,
-                   let since = orphan.confirmedOrphanSince,
-                   Date().timeIntervalSince(since) >= autoKillTimeout
-                {
-                    kill(orphan.pid, SIGTERM)
-                    autoKilled.append(orphan.pid)
+        for orphan in orphans {
+            if !orphan.isPinned,
+               let since = orphan.confirmedOrphanSince,
+               Date().timeIntervalSince(since) >= autoKillTimeout
+            {
+                kill(orphan.pid, SIGTERM)
+                autoKilled.append(orphan.pid)
+            }
+        }
+        if !autoKilled.isEmpty {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                for pid in autoKilled {
+                    if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
                 }
             }
-            if !autoKilled.isEmpty {
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                    for pid in autoKilled {
-                        if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
-                    }
-                }
-                orphans.removeAll { autoKilled.contains($0.pid) }
-                updated.removeAll { autoKilled.contains($0.pid) }
-            }
+            orphans.removeAll { autoKilled.contains($0.pid) }
+            updated.removeAll { autoKilled.contains($0.pid) }
         }
 
         // Get current directory from the shell process directly
@@ -346,19 +415,21 @@ final class ProcessMonitor: ObservableObject {
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
         // Read context usage from statusline JSON (Claude-specific, skip for other CLIs)
-        let newContextUsage: ContextUsage? = (activeCLI == .claude) ? pollContextFile() : nil
+        let newContextUsage: ContextUsage? = (detectedCLI == .claude) ? pollContextFile() : nil
 
         // Adaptive poll interval: fast when CLI active, slow when fully idle
         adjustPollInterval(cliActive: cliStillRunning)
 
         DispatchQueue.main.async { [weak self] in
-            self?.childProcesses = updated
-            self?.orphanedProcesses = orphans
-            if cwd != self?.currentDirectory { self?.currentDirectory = cwd }
+            guard let self = self else { return }
+            self.childProcesses = updated
+            self.orphanedProcesses = orphans
+            if self.activeCLI != detectedCLI { self.activeCLI = detectedCLI }
+            if cwd != self.currentDirectory { self.currentDirectory = cwd }
             if let ctx = newContextUsage {
-                self?.updateContextUsage(ctx)
-            } else if activeCLI != .claude {
-                self?.clearContextUsage()
+                self.updateContextUsage(ctx)
+            } else if detectedCLI != .claude {
+                self.clearContextUsage()
             }
         }
     }
