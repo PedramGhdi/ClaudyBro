@@ -2,6 +2,24 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.11.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.11.0) — Process Cleanup Overhaul & Main-Thread Crash Fix
+
+### Bug Fixes
+- **Fixed system-level hang / restart under heavy process load** — `TerminalTab.runningCLI` was a computed property that called `ProcessTreeQuery.getDescendantProcesses()` (full `KERN_PROC_ALL` sysctl scan) on the **main thread** every time SwiftUI re-evaluated the view body. With ~60 descendants, every published change in any monitor triggered a fresh scan, saturating the main thread and eventually taking the whole system down. `runningCLI` now reads a cached `@Published` value (`ProcessMonitor.activeCLI`) that the background poll updates — zero sysctl calls during view rendering. `LaunchToolbar` lost its dead `hasRunningCLI` parameter since it was declared but never read.
+- **Fixed leaked non-MCP descendants after CLI exit** — when Claude/Gemini exited, the child-process popover kept growing unbounded (32 → 37 → 46 processes observed in a single session). The grace-period cleanup only killed processes flagged `isMCPServer`, and orphan detection only ran on processes flagged `isNodeProcess`. `npm`, `head`, shell helpers, and non-node descendants of the CLI had no cleanup path at all. Now tracks the full CLI subtree via iterative BFS (previously 2 levels deep), accumulates it across polls in `cliSubtreeSnapshot`, and on CLI exit kills every pid in the snapshot that's still alive and not pinned — regardless of type. Orphan detection is no longer restricted to node processes either.
+- **Fixed "kill idle MCP after 0s" being treated as "disabled"** — the `mcpIdleTimeout > 0` and `autoKillTimeout > 0` guards made 0 mean "feature off" instead of "kill immediately". Both guards removed. 0s now means "kill on the first poll where the target is idle", with an `isIdleNow` check (`previousCPUTime > 0 && cpuDelta < 0.01`) so freshly spawned or actively working processes get a one-poll grace period.
+- **Fixed MCP idle-kill being vetoed while a CLI was running** — an overly conservative `!cliStillRunning` guard blocked the user-configured idle timeout whenever any CLI was active. Setting "Kill idle MCPs after: 30s" did nothing if Claude was running. The guard is gone — the existing `isIdleNow` check already protects actively working MCPs (any CPU activity bumps `lastActiveTime` and resets the idle counter), and Claude Code / Gemini auto-restart MCPs on demand so killing idle ones between tool calls is safe.
+- **Fixed duplicate MCP leak when bouncing the CLI within the 15s grace period** — exiting Claude scheduled cleanup, restarting Claude cancelled it, and the old MCPs (now reparented under the shell, unreachable from the new CLI pid) leaked because the snapshot was reset to just the new CLI's subtree. The snapshot is now preserved across CLI restarts, so stragglers from the previous run get reaped on the next exit.
+- **Fixed npm/npx wrappers looking like duplicate MCP entries in the popover** — `npm exec shadcn@latest mcp` creates both a wrapper process and the actual node MCP process; both carry `"shadcn"` in their args, so `describeProcess()` labelled both as "Shadcn UI MCP Server". They looked like duplicates and killing one killed the other (SIGTERM propagated through the process group). `describeProcess()` now detects npm/npx/yarn/bun/pnpm wrappers via `args[0]` basename and suffixes the label with ` (wrapper)`.
+
+### Improvements
+- **Settings helper captions** — the Process Monitor section now explains the 0s semantics under "Auto-kill orphans after" and "Kill idle MCP servers after", so the behavior is visible without reading the source.
+- **Grace-period cleanup gated on the snapshot, not on `updated`** — if the CLI's descendants already died by the time the grace period fires, the cleanup still runs against the accumulated snapshot, catching anything that briefly existed but isn't in the current poll's tracked list.
+
+### Internal
+- Iterative BFS for `cliOwnedPids` runs as a pure in-memory loop over the already-fetched `descendants` array — no extra sysctl calls, microseconds of work even on large subtrees.
+- `ProcessMonitor.poll()` still runs entirely on `DispatchQueue.global(qos: .utility)` with exactly one brief `DispatchQueue.main.sync` to snapshot the tracked cache (<1ms), plus a fire-and-forget `DispatchQueue.main.async` to publish updates. No new main-thread blocking introduced.
+
 ## [v1.10.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.10.0) — Gemini CLI Support, OSC Leak Fix & Tab Reordering
 
 ### New Features

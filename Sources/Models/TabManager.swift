@@ -159,18 +159,15 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 
     /// Check if any AI CLI process is running in this tab's process tree.
+    /// Reads the cached value from ProcessMonitor — never touches sysctl on the main thread.
     var hasAnyCLIRunning: Bool { runningCLI != nil }
 
     /// Which specific CLI is running in this tab (if any).
+    /// Reads the cached value published by ProcessMonitor's background poll. This MUST
+    /// NOT call sysctl — SwiftUI reads this property during view body evaluation, and a
+    /// full process-tree scan here hangs the main thread once the descendant count grows
+    /// (we hit this with ~60 MCP/child processes: body re-renders → sysctl → system hang).
     var runningCLI: CLIProvider? {
-        let pid = processManager.shellPID
-        guard pid > 0 else { return nil }
-        let descendants = ProcessTreeQuery.getDescendantProcesses(of: pid)
-        for provider in CLIProvider.allCases {
-            if descendants.contains(where: { $0.name.contains(provider.processKeyword) }) {
-                return provider
-            }
-        }
-        return nil
+        processMonitor.activeCLI
     }
 }

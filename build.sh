@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.10.0"
+VERSION="1.11.0"
 APP_NAME="ClaudyBro"
 APP_DIR="build/$APP_NAME.app"
 DMG_DIR="build/dmg"
