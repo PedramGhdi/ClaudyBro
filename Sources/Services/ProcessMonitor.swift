@@ -239,18 +239,22 @@ final class ProcessMonitor: ObservableObject {
 
             tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
-            if tracked.isMCPServer {
-                // MCP idle kill: track CPU to detect idle servers, kill after
-                // the user-configured timeout — regardless of whether a CLI is
-                // running. The `isIdleNow` check (cpuDelta < 0.01 since the
-                // previous poll) protects MCPs that are actively serving tool
-                // calls: any real work bumps `lastActiveTime` and resets the
-                // idle counter. Killed MCPs are auto-restarted by Claude Code /
-                // Gemini on the next tool call, so this is safe.
-                //
-                // mcpIdleTimeout == 0 means "kill on the first poll where
-                // CPU is idle". A freshly-spawned MCP's previousCPUTime == 0
-                // makes isIdleNow false, giving it at least one poll of grace.
+            // Dynamic idle-kill applies to every descendant EXCEPT the active
+            // CLI itself. Previously only MCP servers and out-of-subtree
+            // orphans were tracked, so the CLI's own subtree could accumulate
+            // dozens of idle children (duplicate Claude Code workers, leaked
+            // `head`/`npm`/`node` from bash-tool one-shots, Task subagents)
+            // without any cleanup. Protecting only `cliPid` lets every other
+            // descendant be reaped once it sits idle past `mcpIdleTimeout`.
+            //
+            // The idle check uses CPU delta since the previous poll — any
+            // process doing real work bumps `lastActiveTime` and survives.
+            // Killed MCPs auto-restart on the next tool call, and one-shot
+            // helpers (head, npm, subagents) are already done when they hit
+            // this path, so termination is safe.
+            let isCliItself = (entry.pid == cliPid)
+
+            if !isCliItself {
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
@@ -261,6 +265,9 @@ final class ProcessMonitor: ObservableObject {
                 }
                 let isIdleNow = tracked.previousCPUTime > 0 && cpuDelta < 0.01
 
+                // Dynamic kill: any non-CLI descendant idle past the timeout
+                // gets SIGTERM. `previousCPUTime > 0` in `isIdleNow` enforces
+                // at least one poll of grace for freshly-spawned processes.
                 if !tracked.isPinned,
                    isIdleNow,
                    let lastActive = tracked.lastActiveTime,
@@ -270,37 +277,40 @@ final class ProcessMonitor: ObservableObject {
                     mcpKilled.append(entry.pid)
                     continue // don't add to updated
                 }
-            } else if !cliOwnedPids.contains(entry.pid) {
-                // Orphan detection — applies to ANY non-MCP descendant not owned
-                // by the active CLI. Previously restricted to `isNodeProcess`,
-                // which left npm/head/shell-helpers leaking on CLI exit.
-                let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
-                tracked.previousCPUTime = tracked.lastCPUTime
-                tracked.lastCPUTime = cpuTime
 
-                let cpuDelta = tracked.lastCPUTime - tracked.previousCPUTime
-                if cpuDelta < 0.01 && tracked.previousCPUTime > 0 {
-                    tracked.idlePollCount += 1
-                } else {
-                    tracked.idlePollCount = 0
-                    tracked.isOrphanCandidate = false
-                    tracked.orphanSince = nil
-                    tracked.confirmedOrphanSince = nil
-                }
-
-                if tracked.idlePollCount >= 2 {
-                    if !tracked.isOrphanCandidate {
-                        tracked.isOrphanCandidate = true
-                        tracked.orphanSince = Date()
+                // Orphan detection — non-MCP descendants get surfaced in the
+                // UI with a countdown, both in AND out of the CLI subtree.
+                // In-subtree leaks (duplicate Claude workers, one-shot
+                // `head`/`npm`, Task subagent helpers) used to be invisible
+                // because this block gated on `isOutsideCliTree`; users had
+                // no way to tell why the child-process count was climbing.
+                // MCP servers are still excluded — they're handled silently
+                // by the dynamic kill above and clutter the orphan panel
+                // otherwise.
+                if !tracked.isMCPServer {
+                    if cpuDelta < 0.01 && tracked.previousCPUTime > 0 {
+                        tracked.idlePollCount += 1
+                    } else {
+                        tracked.idlePollCount = 0
+                        tracked.isOrphanCandidate = false
+                        tracked.orphanSince = nil
+                        tracked.confirmedOrphanSince = nil
                     }
 
-                    if let since = tracked.orphanSince,
-                       Date().timeIntervalSince(since) >= orphanTimeout
-                    {
-                        if tracked.confirmedOrphanSince == nil {
-                            tracked.confirmedOrphanSince = Date()
+                    if tracked.idlePollCount >= 2 {
+                        if !tracked.isOrphanCandidate {
+                            tracked.isOrphanCandidate = true
+                            tracked.orphanSince = Date()
                         }
-                        orphans.append(tracked)
+
+                        if let since = tracked.orphanSince,
+                           Date().timeIntervalSince(since) >= orphanTimeout
+                        {
+                            if tracked.confirmedOrphanSince == nil {
+                                tracked.confirmedOrphanSince = Date()
+                            }
+                            orphans.append(tracked)
+                        }
                     }
                 }
             }

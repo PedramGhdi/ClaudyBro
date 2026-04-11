@@ -2,6 +2,16 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.11.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.11.1) — Dynamic In-Subtree Process Cleanup
+
+### Bug Fixes
+- **Fixed runaway child-process accumulation while a CLI is running** — sessions were observed hitting 60, 73, 87+ descendants (duplicate "Claude Code" workers at ~1 MB, leaked `node` processes at 200 MB–1 GB, `head`/`npm` one-shots from bash-tool pipelines, Task subagent helpers). `ProcessMonitor.poll()` previously skipped all CPU tracking for non-MCP processes *inside* the active CLI's subtree, so nothing short of the CLI exiting would reap them. The inner loop now tracks CPU for every descendant except `cliPid` itself, and any non-pinned child idle past `mcpIdleTimeout` gets SIGTERM immediately (SIGKILL 3s later if it ignores). Kills are safe: MCP servers auto-restart on the next tool call, and `head`/`npm`/subagent helpers are already finished by the time they hit this path.
+- **Fixed in-subtree leaks being invisible in the orphan panel** — the bottom-right orphan badge used to gate on `!cliOwnedPids.contains(pid)`, so the very processes causing the runaway count never showed up in the UI. Users had no way to tell why the child-process count was climbing. Orphan detection now surfaces all non-MCP descendants (in and out of subtree) with the existing idle countdown; MCPs are still excluded so the panel doesn't drown in normal idle servers.
+
+### Internal
+- The active CLI process (`cliPid`) is now the only protected entry in the loop — every other descendant runs through the CPU-delta idle check. The protection is tight enough that SwiftUI views, the shell, and pinned processes are unaffected.
+- CPU tracking now runs for ~every descendant per poll instead of only MCPs + out-of-tree orphans. `proc_pidinfo` is cheap (<1 ms/call), so even ~60 descendants on a 2 s poll interval stays well under the existing performance budget.
+
 ## [v1.11.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.11.0) — Process Cleanup Overhaul & Main-Thread Crash Fix
 
 ### Bug Fixes
