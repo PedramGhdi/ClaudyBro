@@ -6,6 +6,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
     case claude
     case gemini
     case codex
+    case kilo
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "claude"
         case .gemini: return "gemini"
         case .codex:  return "codex"
+        case .kilo:   return "kilo"
         }
     }
 
@@ -24,6 +26,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "Claude"
         case .gemini: return "Gemini"
         case .codex:  return "Codex"
+        case .kilo:   return "Kilo"
         }
     }
 
@@ -33,6 +36,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "brain"
         case .gemini: return "sparkles"
         case .codex:  return "terminal"
+        case .kilo:   return "bolt"
         }
     }
 
@@ -42,6 +46,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return NSColor(red: 0.25, green: 0.50, blue: 0.95, alpha: 1.0)
         case .gemini: return NSColor(red: 0.30, green: 0.65, blue: 0.95, alpha: 1.0)
         case .codex:  return .systemGreen
+        case .kilo:   return .systemOrange
         }
     }
 
@@ -69,6 +74,12 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
                 "/opt/homebrew/bin/codex",
                 "\(home)/.npm-global/bin/codex",
             ]
+        case .kilo:
+            return [
+                "/usr/local/bin/kilo",
+                "/opt/homebrew/bin/kilo",
+                "\(home)/.npm-global/bin/kilo",
+            ]
         }
     }
 
@@ -76,8 +87,9 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
     var npxPackage: String? {
         switch self {
         case .claude: return "@anthropic-ai/claude-code"
-        case .gemini: return "@anthropic-ai/gemini-cli"
+        case .gemini: return "@google/gemini-cli"
         case .codex:  return "@openai/codex"
+        case .kilo:   return "@kilocode/cli"
         }
     }
 
@@ -96,6 +108,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "claude --dangerously-skip-permissions"
         case .gemini: return nil
         case .codex:  return "codex --full-auto"
+        case .kilo:   return nil
         }
     }
 
@@ -105,6 +118,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "Skip Permissions"
         case .gemini: return nil
         case .codex:  return "Full Auto"
+        case .kilo:   return nil
         }
     }
 
@@ -117,6 +131,7 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
         case .claude: return "Claude Code"
         case .gemini: return "Gemini CLI"
         case .codex:  return "Codex CLI"
+        case .kilo:   return "Kilo Code"
         }
     }
 

@@ -157,6 +157,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
+        // Safety net: close the PTY so SwiftTerm's DispatchIO + fds release.
+        // Without this, the shell + CLI tree survive as zombie children.
+        if process?.shellPid ?? 0 > 0 { terminate() }
         if writeFd >= 0 { close(writeFd) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         NotificationCenter.default.removeObserver(self)

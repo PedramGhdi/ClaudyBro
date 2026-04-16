@@ -239,22 +239,17 @@ final class ProcessMonitor: ObservableObject {
 
             tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
-            // Dynamic idle-kill applies to every descendant EXCEPT the active
-            // CLI itself. Previously only MCP servers and out-of-subtree
-            // orphans were tracked, so the CLI's own subtree could accumulate
-            // dozens of idle children (duplicate Claude Code workers, leaked
-            // `head`/`npm`/`node` from bash-tool one-shots, Task subagents)
-            // without any cleanup. Protecting only `cliPid` lets every other
-            // descendant be reaped once it sits idle past `mcpIdleTimeout`.
-            //
-            // The idle check uses CPU delta since the previous poll — any
-            // process doing real work bumps `lastActiveTime` and survives.
-            // Killed MCPs auto-restart on the next tool call, and one-shot
-            // helpers (head, npm, subagents) are already done when they hit
-            // this path, so termination is safe.
-            let isCliItself = (entry.pid == cliPid)
+            // The CLI process itself is always protected from idle-kill.
+            // For non-Claude CLIs (Gemini, Kilo, Codex), protect the
+            // entire subtree — those CLIs don't auto-restart killed
+            // children, so killing their workers crashes them.
+            // For Claude Code, only protect the CLI PID — Claude
+            // auto-restarts MCPs and accumulates idle one-shot helpers
+            // (head, npm, node workers, subagents) that need cleanup.
+            let isProtected = (entry.pid == cliPid)
+                || (detectedCLI != .claude && cliOwnedPids.contains(entry.pid))
 
-            if !isCliItself {
+            if !isProtected {
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
                 tracked.previousCPUTime = tracked.lastCPUTime
                 tracked.lastCPUTime = cpuTime
