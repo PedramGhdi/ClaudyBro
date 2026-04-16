@@ -2,6 +2,21 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.12.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.12.0) — Tab-Close Process Leak Fix & Kilo Code Support
+
+### Bug Fixes
+- **Fixed runaway CPU/memory from closed tabs leaking their entire shell + CLI trees** — `TabManager.closeTab` removed the tab from the array but never terminated the PTY. SwiftUI's NSView release timing is non-deterministic, so `ClaudyTerminalView.deinit` (and therefore SwiftTerm's cleanup) often didn't run for minutes or hours. In one observed session, closing 3 tabs over 11 hours left 5 hidden `claude` processes still running under ClaudyBro — combined ~65% CPU, fully invisible because the status bar only scans the active tab's subtree. `closeTab` now sends `SIGTERM` to the tab's full process group (`-shellPID`) and escalates to `SIGKILL` after 3 s if the shell ignores it, plus stops the tab's `ProcessMonitor` immediately so polling doesn't continue on a dying tree. `ClaudyTerminalView.deinit` also calls `terminate()` now as a safety net for any path that does reach dealloc (app quit, etc.).
+- **Fixed idle-kill crashing non-Claude CLIs** — the v1.11.1 dynamic idle-kill protected only `cliPid` itself, which was safe for Claude Code (it auto-restarts killed MCPs) but broke Gemini, Codex, and Kilo — those CLIs don't auto-restart their workers, so reaping an idle child crashed the whole session. `poll()` now protects the entire subtree for non-Claude CLIs (`detectedCLI != .claude && cliOwnedPids.contains(pid)`) while keeping Claude's aggressive cleanup. MCPs under Claude are still eligible for idle-kill; everything under Gemini/Codex/Kilo rides along with the CLI.
+- **Fixed wrong npx package for Gemini** — `CLIProvider.npxPackage` for Gemini was `@anthropic-ai/gemini-cli` (Anthropic doesn't publish Gemini). Corrected to `@google/gemini-cli`, so "Run via npx" actually works.
+
+### New Features
+- **Kilo Code CLI support** — added `kilo` as a first-class `CLIProvider` alongside Claude, Gemini, and Codex. Includes binary path discovery (`/usr/local/bin/kilo`, Homebrew, npm-global), npx fallback via `@kilocode/cli`, orange accent color, and bolt icon. Kilo path is user-configurable in Settings and persisted to `config.json`.
+
+### Internal
+- `TabManager.closeTab` is now the single chokepoint for tab teardown: stop monitor → kill process group → remove from array. The `tabs.count > 1` guard is preserved so the last tab still quits the app via `requestCloseTab` rather than leaving the window empty.
+- `ClaudyTerminalView.deinit` guards `terminate()` on `process?.shellPid ?? 0 > 0` to avoid touching SwiftTerm internals on a view that never finished `makeNSView` (unlikely, but cheap insurance).
+- `ProcessMonitor.poll()`'s protection predicate replaces the old `isCliItself` boolean with `isProtected`, with the CLI-type gate inline so future CLIs (Codex, Kilo) get correct behavior by default.
+
 ## [v1.11.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.11.1) — Dynamic In-Subtree Process Cleanup
 
 ### Bug Fixes

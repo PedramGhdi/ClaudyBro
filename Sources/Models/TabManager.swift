@@ -67,8 +67,22 @@ final class TabManager: ObservableObject {
     /// Close without confirmation (internal use after confirmation).
     func closeTab(id: UUID) {
         guard tabs.count > 1 else { return }
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
         let wasActive = (id == activeTabId)
         let idx = tabs.firstIndex { $0.id == id } ?? 0
+
+        // Kill the tab's shell + all descendants via its process group.
+        // SwiftUI doesn't release the NSView deterministically, so relying on
+        // deinit leaks zsh + CLI trees as children of ClaudyBro forever.
+        let shellPID = tab.processManager.shellPID
+        if shellPID > 0 {
+            tab.processMonitor.stopMonitoring()
+            kill(-shellPID, SIGTERM)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                if ProcessTreeQuery.isProcessAlive(shellPID) { kill(-shellPID, SIGKILL) }
+            }
+        }
+
         tabs.removeAll { $0.id == id }
         if wasActive {
             let newIdx = min(idx, tabs.count - 1)

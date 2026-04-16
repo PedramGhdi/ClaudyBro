@@ -9,6 +9,7 @@ final class AppConfiguration: ObservableObject {
     @Published var claudePath: String = "auto"
     @Published var geminiPath: String = "auto"
     @Published var codexPath: String = "auto"
+    @Published var kiloPath: String = "auto"
     @Published var theme: String = "dark"
     @Published var orphanTimeoutSeconds: Int = 30
     @Published var processMonitorInterval: Int = 5
@@ -37,6 +38,7 @@ final class AppConfiguration: ObservableObject {
             if let v = json["claudePath"] as? String { claudePath = v }
             if let v = json["geminiPath"] as? String { geminiPath = v }
             if let v = json["codexPath"] as? String { codexPath = v }
+            if let v = json["kiloPath"] as? String { kiloPath = v }
             if let v = json["theme"] as? String { theme = v }
             if let v = json["orphanTimeoutSeconds"] as? Int { orphanTimeoutSeconds = v }
             if let v = json["processMonitorInterval"] as? Int { processMonitorInterval = v }
@@ -59,6 +61,7 @@ final class AppConfiguration: ObservableObject {
             "claudePath": claudePath,
             "geminiPath": geminiPath,
             "codexPath": codexPath,
+            "kiloPath": kiloPath,
             "theme": theme,
             "orphanTimeoutSeconds": orphanTimeoutSeconds,
             "processMonitorInterval": processMonitorInterval,
@@ -84,6 +87,7 @@ final class AppConfiguration: ObservableObject {
         case .claude: return claudePath
         case .gemini: return geminiPath
         case .codex:  return codexPath
+        case .kilo:   return kiloPath
         }
     }
 
@@ -92,6 +96,7 @@ final class AppConfiguration: ObservableObject {
         case .claude: claudePath = value
         case .gemini: geminiPath = value
         case .codex:  codexPath = value
+        case .kilo:   kiloPath = value
         }
     }
 }
