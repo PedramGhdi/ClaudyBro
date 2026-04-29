@@ -4,6 +4,7 @@ import SwiftUI
 struct MainWindow: View {
     @StateObject private var tabManager = TabManager()
     @State private var showSettings = false
+    @State private var showCommandPalette = false
     @State private var windowTitle: String = "ClaudyBro"
 
     var body: some View {
@@ -14,18 +15,18 @@ struct MainWindow: View {
 
             if let tab = tabManager.activeTab {
                 LaunchToolbar(
-                    processManager: tab.processManager,
-                    processMonitor: tab.processMonitor
+                    processManager: tab.activePane.processManager,
+                    processMonitor: tab.activePane.processMonitor
                 )
             }
 
+            // Render every tab so background tabs keep their PTYs alive,
+            // but only the active tab is visible / hit-testable.
             ZStack {
                 ForEach(tabManager.tabs) { tab in
-                    TerminalViewWrapper(
-                        processManager: tab.processManager,
-                        processMonitor: tab.processMonitor,
-                        isActive: tab.id == tabManager.activeTabId,
-                        initialDirectory: tab.initialDirectory
+                    TabPaneTreeView(
+                        tab: tab,
+                        isActiveTab: tab.id == tabManager.activeTabId
                     )
                     .opacity(tab.id == tabManager.activeTabId ? 1 : 0)
                     .allowsHitTesting(tab.id == tabManager.activeTabId)
@@ -34,26 +35,55 @@ struct MainWindow: View {
 
             if let tab = tabManager.activeTab {
                 StatusBarView(
-                    processMonitor: tab.processMonitor,
-                    shellPID: tab.processManager.shellPID
+                    processMonitor: tab.activePane.processMonitor,
+                    shellPID: tab.activePane.processManager.shellPID
                 )
             }
         }
         .frame(minWidth: 400, minHeight: 300)
-        .background(Color(nsColor: Constants.backgroundColor))
+        .background(Color(nsColor: AppConfiguration.shared.currentTheme.background))
         .preferredColorScheme(.dark)
         .navigationTitle(windowTitle)
         .onAppear { AppDelegate.tabManager = tabManager }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .sheet(isPresented: $showCommandPalette) {
+            if let tab = tabManager.activeTab {
+                CommandPaletteView(
+                    isPresented: $showCommandPalette,
+                    providers: CLIProvider.allCases,
+                    installedProviders: Set(tab.activePane.processManager.foundProviders),
+                    npxAvailable: tab.activePane.processManager.npxAvailable
+                )
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
             showSettings = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openCommandPalette)) { _ in
+            showCommandPalette = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newTab)) { _ in
-            let dir = tabManager.activeTab?.processMonitor.currentDirectory
+            let dir = tabManager.activeTab?.activePane.processMonitor.currentDirectory
             tabManager.addNewTab(initialDirectory: dir?.isEmpty == false ? dir : nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: .closeTab)) { _ in
             if let id = tabManager.activeTabId { tabManager.requestCloseTab(id: id) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .splitPaneVertical)) { _ in
+            tabManager.activeTab?.splitActivePane(direction: .vertical)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .splitPaneHorizontal)) { _ in
+            tabManager.activeTab?.splitActivePane(direction: .horizontal)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .closePane)) { _ in
+            guard let tab = tabManager.activeTab else { return }
+            if tab.closeActivePane() {
+                // Last pane in tab — close the whole tab.
+                if let id = tabManager.activeTabId { tabManager.requestCloseTab(id: id) }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nextPane)) { _ in
+            tabManager.activeTab?.focusNextPane()
         }
         .onReceive(NotificationCenter.default.publisher(for: .nextTab)) { _ in
             tabManager.selectNextTab()
@@ -74,7 +104,7 @@ struct MainWindow: View {
 
     private func updateWindowTitle() {
         guard let tab = tabManager.activeTab else { windowTitle = "ClaudyBro"; return }
-        let dir = tab.processMonitor.currentDirectory
+        let dir = tab.activePane.processMonitor.currentDirectory
         guard !dir.isEmpty else { windowTitle = "ClaudyBro"; return }
         // Keep lastWorkingDirectory fresh so app restart uses the latest cwd
         UserDefaults.standard.set(dir, forKey: "lastWorkingDirectory")
@@ -191,7 +221,7 @@ struct LaunchToolbar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .frame(height: 28)
-        .background(Color(nsColor: Constants.statusBarBackground))
+        .background(Color(nsColor: AppConfiguration.shared.currentTheme.statusBarBackground))
     }
 
     // MARK: - Helpers
@@ -294,7 +324,21 @@ struct SettingsSheet: View {
     var body: some View {
         Form {
             Section("Appearance") {
+                Picker("Theme", selection: $config.theme) {
+                    ForEach(Theme.allPresets) { theme in
+                        Text(theme.name).tag(theme.id)
+                    }
+                }
                 Stepper("Font Size: \(Int(config.fontSize))", value: $config.fontSize, in: 8...32, step: 1)
+                HStack {
+                    Text("Font Family")
+                    Spacer()
+                    TextField("SF Mono", text: $config.fontName)
+                        .frame(width: 200)
+                        .textFieldStyle(.roundedBorder)
+                }
+                Text("Any installed monospaced font (e.g., \"Menlo\", \"JetBrains Mono\"). Falls back to system mono if invalid.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("CLI Paths") {
                 ForEach(CLIProvider.allCases) { provider in
@@ -313,6 +357,35 @@ struct SettingsSheet: View {
             Section("Terminal") {
                 Toggle("Full scrollback (disable alternate screen)", isOn: $config.disableAltScreen)
             }
+            Section("Saved Prompts") {
+                if config.savedPrompts.isEmpty {
+                    Text("Add reusable prompts surfaced in the command palette (⌘⇧P).")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                ForEach($config.savedPrompts) { $prompt in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            TextField("Name", text: $prompt.name)
+                                .textFieldStyle(.roundedBorder)
+                            Button(role: .destructive) {
+                                config.savedPrompts.removeAll { $0.id == prompt.id }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        TextField("Prompt body", text: $prompt.body, axis: .vertical)
+                            .lineLimit(2...5)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Button {
+                    config.savedPrompts.append(SavedPrompt(name: "New prompt", body: ""))
+                } label: {
+                    Label("Add prompt", systemImage: "plus")
+                }
+            }
             Section("Process Monitor") {
                 StepperField(label: "Auto-kill orphans after:",
                              value: $config.autoKillTimeoutSeconds, range: 0...600, step: 10)
@@ -324,12 +397,12 @@ struct SettingsSheet: View {
                              value: $config.processMonitorInterval, range: 1...30, step: 1)
                 StepperField(label: "Kill idle MCP servers after:",
                              value: $config.mcpIdleKillSeconds, range: 0...600, step: 30)
-                Text("Kills MCPs with no CPU activity for this long. Claude auto-restarts them on next tool call. 0s = kill as soon as idle.")
+                Text("Kills idle MCPs under CLIs that auto-restart them (e.g. Claude). For other CLIs, the entire CLI subtree is protected. 0s = kill as soon as idle.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 400)
+        .frame(width: 460, height: 540)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {

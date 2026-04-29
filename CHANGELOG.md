@@ -2,6 +2,28 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.13.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.13.0) — Multi-CLI Parity, Themes, Command Palette, Saved Prompts, Split Panes
+
+### Bug Fixes
+- **Fixed Gemini / Kilo / Codex sessions silently writing into `~/.claude/`** — `StatusLineBridge.ensureConfigured()` ran unconditionally at app launch and created `~/.claude/statusline-command.sh` plus mutated `~/.claude/settings.json` even for users who only run other CLIs. The bridge now iterates `CLIProvider.allCases.filter(\.supportsStatusLine)` and only acts when the provider's config directory already exists — no surprise dotfile creation for Gemini-only / Kilo-only setups.
+- **Removed hardcoded `== .claude` checks scattered through `ProcessMonitor`** — three call sites (subtree-protection, context-telemetry polling, telemetry clear-on-exit) gated behavior on the literal Claude case, so adding a CLI required editing the monitor. Each site now reads a capability flag on `CLIProvider`. Behavior is identical for Claude; Gemini/Kilo/Codex now get the right policy by declaration rather than by being "not Claude".
+- **Updated misleading help copy** — Process Monitor settings text claimed "Claude auto-restarts them" without context; now describes the actual rule (CLIs that auto-restart MCPs vs. those that don't).
+
+### New Features
+- **Themes** — `Theme` model with four built-in presets: ClaudyBro Dark (default), Warp-Inspired Dark, Solarized Dark, Dracula. Picker lives in Settings → Appearance and applies live via `.configurationChanged` (no restart). Background, foreground, status-bar chrome, and the full 16-color ANSI palette all swap together. Font Family field added next to Font Size — accepts any installed monospaced font, falls back to the system mono if the name is invalid.
+- **Command palette (⌘⇧P)** — fuzzy-matched palette over every CLI launch (`Run Claude`, `npx Gemini`, `Skip Permissions`, etc.), every saved prompt, every theme switch, plus app actions (new/close tab, split/close pane, kill orphans, open settings, check for updates). Arrow keys navigate, Enter dispatches, Esc dismisses. Cmd+K stays bound to clear-screen as before.
+- **Saved prompts** — define reusable prompt snippets in Settings → Saved Prompts. Each one shows up in the command palette as a `text.bubble` entry; selecting it pipes `body + "\n"` into the active pane via the existing `.sendTerminalCommand` path. Persisted to `config.json` alongside the rest of `AppConfiguration`.
+- **Split panes** — `Cmd+D` splits the active pane vertically, `Cmd+Shift+D` splits horizontally, `Cmd+Shift+W` closes the focused pane (closes the tab when it was the last pane), `Cmd+Opt+]` cycles focus. Each pane owns its own `CLIProcessManager` + `ProcessMonitor`, so splits run completely independent CLI sessions (Claude on the left, Gemini on the right, Codex below, etc.). Dividers are draggable via `HSplitView` / `VSplitView`. The focused pane shows a subtle accent border whenever more than one pane is visible.
+
+### Internal
+- New `CLIProvider` capability surface: `autoRestartsKilledMCPs`, `supportsContextTelemetry`, `supportsStatusLine`, `configDirectory`. Adding a new CLI now means filling these in — no edits to `ProcessMonitor` / `StatusLineBridge` required.
+- `TerminalTab` no longer holds a single `CLIProcessManager` + `ProcessMonitor`. It owns a recursive `PaneNode` tree and tracks `activePaneId`. Toolbar, status bar, window-title, and notification dispatch all read through `tab.activePane`. `closeTab` iterates every leaf and kills each pane's process group, so closing a tab with N split panes correctly reaps N shell trees.
+- `PaneNode` is a class-based tree (`.leaf(TerminalPane)` / `.split(direction, [PaneNode])`) with helpers for `split(leafId:direction:)`, `removeLeaf(id:)`, `findLeafNode(id:)`, plus auto-collapse of single-child splits after a pane removal.
+- `ClaudyTerminalView` subscribes to `.configurationChanged` and re-runs `configureAppearance()` on the main queue so theme / font edits in Settings apply without re-spawning the PTY.
+
+### Inspiration vs. Code
+- Warp's open-source release (https://github.com/warpdotdev/Warp) inspired the palette / panes / themes direction, but Warp is ~98% Rust on a custom GPU UI framework and most of it is AGPL v3. Nothing was copied. ClaudyBro stays Swift + SwiftTerm + SwiftUI, ~4.3 MB.
+
 ## [v1.12.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.12.0) — Tab-Close Process Leak Fix & Kilo Code Support
 
 ### Bug Fixes

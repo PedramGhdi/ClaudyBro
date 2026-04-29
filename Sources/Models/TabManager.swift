@@ -71,15 +71,17 @@ final class TabManager: ObservableObject {
         let wasActive = (id == activeTabId)
         let idx = tabs.firstIndex { $0.id == id } ?? 0
 
-        // Kill the tab's shell + all descendants via its process group.
+        // Kill every pane's shell tree via its process group.
         // SwiftUI doesn't release the NSView deterministically, so relying on
         // deinit leaks zsh + CLI trees as children of ClaudyBro forever.
-        let shellPID = tab.processManager.shellPID
-        if shellPID > 0 {
-            tab.processMonitor.stopMonitoring()
-            kill(-shellPID, SIGTERM)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                if ProcessTreeQuery.isProcessAlive(shellPID) { kill(-shellPID, SIGKILL) }
+        for pane in tab.root.allLeaves {
+            let shellPID = pane.processManager.shellPID
+            if shellPID > 0 {
+                pane.processMonitor.stopMonitoring()
+                kill(-shellPID, SIGTERM)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                    if ProcessTreeQuery.isProcessAlive(shellPID) { kill(-shellPID, SIGKILL) }
+                }
             }
         }
 
@@ -153,35 +155,72 @@ final class TabManager: ObservableObject {
     }
 }
 
-/// One terminal session with its own shell, process manager, and monitor.
+/// One terminal *tab* — owns a recursive pane tree. The active pane within
+/// a tab is what the toolbar / status bar / keyboard shortcuts target.
 final class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     @Published var title: String = "Shell"
-    let processManager = CLIProcessManager()
-    let processMonitor: ProcessMonitor
-    let initialDirectory: String?
+    @Published var root: PaneNode
+    @Published var activePaneId: UUID
 
     init(initialDirectory: String? = nil) {
-        self.initialDirectory = initialDirectory
-        let monitor = ProcessMonitor()
-        let config = AppConfiguration.shared
-        monitor.monitorInterval = TimeInterval(config.processMonitorInterval)
-        monitor.orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
-        monitor.autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
-        monitor.mcpIdleTimeout = TimeInterval(config.mcpIdleKillSeconds)
-        self.processMonitor = monitor
+        let firstLeaf = PaneNode.leaf(initialDirectory: initialDirectory)
+        self.root = firstLeaf
+        self.activePaneId = firstLeaf.leafPane!.id
     }
 
-    /// Check if any AI CLI process is running in this tab's process tree.
-    /// Reads the cached value from ProcessMonitor — never touches sysctl on the main thread.
-    var hasAnyCLIRunning: Bool { runningCLI != nil }
+    /// Convenience for the first leaf — used during init / fallbacks.
+    var firstLeaf: TerminalPane { root.allLeaves.first! }
 
-    /// Which specific CLI is running in this tab (if any).
-    /// Reads the cached value published by ProcessMonitor's background poll. This MUST
-    /// NOT call sysctl — SwiftUI reads this property during view body evaluation, and a
-    /// full process-tree scan here hangs the main thread once the descendant count grows
-    /// (we hit this with ~60 MCP/child processes: body re-renders → sysctl → system hang).
-    var runningCLI: CLIProvider? {
-        processMonitor.activeCLI
+    /// Currently focused pane. Falls back to the first leaf if id is stale.
+    var activePane: TerminalPane {
+        root.allLeaves.first { $0.id == activePaneId } ?? firstLeaf
+    }
+
+    /// True if any pane in this tab has an active CLI session.
+    var hasAnyCLIRunning: Bool { root.allLeaves.contains { $0.hasAnyCLIRunning } }
+
+    /// CLI of the currently active pane (drives toolbar / window title).
+    var runningCLI: CLIProvider? { activePane.runningCLI }
+
+    // MARK: - Pane operations
+
+    func splitActivePane(direction: SplitDirection) {
+        if let newId = root.split(leafId: activePaneId, direction: direction) {
+            activePaneId = newId
+        }
+    }
+
+    /// Close the active pane. Returns true if the tab itself should close
+    /// (because the tree is now empty).
+    @discardableResult
+    func closeActivePane() -> Bool {
+        let leaves = root.allLeaves
+        // Last leaf in this tab — caller should close the whole tab.
+        if leaves.count <= 1 { return true }
+
+        // Kill the pane's shell tree before removing it.
+        let pane = activePane
+        let shellPID = pane.processManager.shellPID
+        if shellPID > 0 {
+            pane.processMonitor.stopMonitoring()
+            kill(-shellPID, SIGTERM)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                if ProcessTreeQuery.isProcessAlive(shellPID) { kill(-shellPID, SIGKILL) }
+            }
+        }
+
+        let removedId = pane.id
+        if let nextId = root.removeLeaf(id: removedId) {
+            activePaneId = nextId
+        }
+        return false
+    }
+
+    func focusNextPane() {
+        let leaves = root.allLeaves
+        guard leaves.count > 1,
+              let idx = leaves.firstIndex(where: { $0.id == activePaneId }) else { return }
+        activePaneId = leaves[(idx + 1) % leaves.count].id
     }
 }

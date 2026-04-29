@@ -10,7 +10,7 @@ final class AppConfiguration: ObservableObject {
     @Published var geminiPath: String = "auto"
     @Published var codexPath: String = "auto"
     @Published var kiloPath: String = "auto"
-    @Published var theme: String = "dark"
+    @Published var theme: String = Theme.claudyBroDark.id
     @Published var orphanTimeoutSeconds: Int = 30
     @Published var processMonitorInterval: Int = 5
     @Published var autoKillTimeoutSeconds: Int = 90
@@ -19,10 +19,14 @@ final class AppConfiguration: ObservableObject {
     @Published var mcpIdleKillSeconds: Int = 90
     @Published var disableAltScreen: Bool = true
     @Published var pinnedProcessDescriptions: [String] = []
+    @Published var savedPrompts: [SavedPrompt] = []
 
     var preferredProvider: CLIProvider? {
         CLIProvider(rawValue: preferredCLI)
     }
+
+    /// Resolved theme from the persisted id. Falls back to ClaudyBro Dark for unknown ids.
+    var currentTheme: Theme { Theme.preset(id: theme) }
 
     private init() {
         load()
@@ -49,6 +53,14 @@ final class AppConfiguration: ObservableObject {
             if let v = json["disableAltScreen"] as? Bool { disableAltScreen = v }
 
             if let v = json["pinnedProcessDescriptions"] as? [String] { pinnedProcessDescriptions = v }
+            if let arr = json["savedPrompts"] as? [[String: Any]] {
+                savedPrompts = arr.compactMap { dict in
+                    guard let name = dict["name"] as? String,
+                          let body = dict["body"] as? String else { return nil }
+                    let id = (dict["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
+                    return SavedPrompt(id: id, name: name, body: body)
+                }
+            }
         } catch {
             // Ignore corrupt config — use defaults
         }
@@ -71,6 +83,7 @@ final class AppConfiguration: ObservableObject {
             "mcpIdleKillSeconds": mcpIdleKillSeconds,
             "disableAltScreen": disableAltScreen,
             "pinnedProcessDescriptions": pinnedProcessDescriptions,
+            "savedPrompts": savedPrompts.map { ["id": $0.id.uuidString, "name": $0.name, "body": $0.body] },
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)

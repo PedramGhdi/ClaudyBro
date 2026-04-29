@@ -149,6 +149,10 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             self, selector: #selector(handleCLIExited(_:)),
             name: .cliProcessExited, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleConfigurationChanged),
+            name: .configurationChanged, object: nil
+        )
 
         installKeyMonitor()
     }
@@ -313,17 +317,29 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
 
     func configureAppearance() {
         let config = AppConfiguration.shared
-        font = NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
-        nativeForegroundColor = Constants.foregroundColor
-        nativeBackgroundColor = Constants.backgroundColor
+        let theme = config.currentTheme
+        // Custom font name falls back to monospaced system font if invalid.
+        if let custom = NSFont(name: config.fontName, size: config.fontSize) {
+            font = custom
+        } else {
+            font = NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
+        }
+        nativeForegroundColor = theme.foreground
+        nativeBackgroundColor = theme.background
         changeScrollback(5000)
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
-        altScreenFilter.isEnabled = AppConfiguration.shared.disableAltScreen
+        altScreenFilter.isEnabled = config.disableAltScreen
 
-        // Install ANSI palette matching our dark theme so CLI tools' colored
-        // UI blocks (code areas, status bars) blend with the background.
-        installColors(Constants.ansiPalette)
+        // Install themed ANSI palette so CLI tools' colored UI blocks blend in.
+        installColors(theme.ansiPalette)
+    }
+
+    @objc private func handleConfigurationChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.configureAppearance()
+            self?.needsDisplay = true
+        }
     }
 
     // MARK: - Focus management

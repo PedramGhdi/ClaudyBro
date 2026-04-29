@@ -10,7 +10,7 @@ struct TabBarView: View {
         HStack(spacing: 0) {
             ForEach(Array(tabManager.tabs.enumerated()), id: \.element.id) { index, tab in
                 TabItem(
-                    processMonitor: tab.processMonitor,
+                    tab: tab,
                     index: index + 1,
                     isActive: tab.id == tabManager.activeTabId,
                     canClose: tabManager.tabs.count > 1,
@@ -51,7 +51,7 @@ struct TabBarView: View {
             .help("New Tab (Cmd+T)")
         }
         .frame(height: 28)
-        .background(Color(nsColor: Constants.statusBarBackground))
+        .background(Color(nsColor: AppConfiguration.shared.currentTheme.statusBarBackground))
     }
 }
 
@@ -96,7 +96,7 @@ private struct TabDropDelegate: DropDelegate {
 // MARK: - Single Tab Item
 
 private struct TabItem: View {
-    @ObservedObject var processMonitor: ProcessMonitor
+    @ObservedObject var tab: TerminalTab
     let index: Int
     let isActive: Bool
     let canClose: Bool
@@ -107,7 +107,7 @@ private struct TabItem: View {
     @State private var isHovered = false
 
     private var tabTitle: String {
-        let dir = processMonitor.currentDirectory
+        let dir = tab.activePane.processMonitor.currentDirectory
         guard !dir.isEmpty else { return "Shell" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if dir.hasPrefix(home) {
