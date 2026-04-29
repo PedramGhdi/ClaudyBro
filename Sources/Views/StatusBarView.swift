@@ -51,7 +51,7 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .frame(height: 24)
-        .background(Color(nsColor: Constants.statusBarBackground))
+        .background(Color(nsColor: AppConfiguration.shared.currentTheme.statusBarBackground))
         .onReceive(countdownTimer) { newTick in
             // Only update tick when orphans exist — avoids unnecessary re-renders
             if !processMonitor.orphanedProcesses.isEmpty { tick = newTick }

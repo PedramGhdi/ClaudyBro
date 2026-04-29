@@ -137,4 +137,40 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
 
     /// Config key for the custom binary path in config.json.
     var configPathKey: String { "\(rawValue)Path" }
+
+    // MARK: - Capabilities (used by ProcessMonitor & status bridge)
+
+    /// True if this CLI auto-respawns its MCP child processes on next tool call.
+    /// When true, ProcessMonitor may safely reap idle MCP servers under the CLI's
+    /// subtree. When false, the entire subtree is protected because killing a
+    /// child crashes the CLI (no auto-restart).
+    var autoRestartsKilledMCPs: Bool {
+        switch self {
+        case .claude: return true
+        case .gemini, .codex, .kilo: return false
+        }
+    }
+
+    /// True if this CLI emits context-window / model / cost telemetry that the
+    /// status bar can display. Currently only Claude wires this through the
+    /// statusline-command.sh bridge.
+    var supportsContextTelemetry: Bool {
+        switch self {
+        case .claude: return true
+        case .gemini, .codex, .kilo: return false
+        }
+    }
+
+    /// True if the CLI exposes a statusLine settings hook we can install into.
+    var supportsStatusLine: Bool { supportsContextTelemetry }
+
+    /// User config directory (e.g. "~/.claude"). Nil if the CLI has no
+    /// well-known config dir we should write into.
+    var configDirectory: String? {
+        let home = NSHomeDirectory()
+        switch self {
+        case .claude: return "\(home)/.claude"
+        case .gemini, .codex, .kilo: return nil
+        }
+    }
 }

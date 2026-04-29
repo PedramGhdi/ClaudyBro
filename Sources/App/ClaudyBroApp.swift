@@ -71,6 +71,35 @@ struct ClaudyBroApp: App {
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
             }
+
+            CommandMenu("View") {
+                Button("Command Palette") {
+                    NotificationCenter.default.post(name: .openCommandPalette, object: nil)
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Split Vertically") {
+                    NotificationCenter.default.post(name: .splitPaneVertical, object: nil)
+                }
+                .keyboardShortcut("d", modifiers: .command)
+
+                Button("Split Horizontally") {
+                    NotificationCenter.default.post(name: .splitPaneHorizontal, object: nil)
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+
+                Button("Close Pane") {
+                    NotificationCenter.default.post(name: .closePane, object: nil)
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+
+                Button("Next Pane") {
+                    NotificationCenter.default.post(name: .nextPane, object: nil)
+                }
+                .keyboardShortcut("]", modifiers: [.command, .option])
+            }
         }
     }
 }
@@ -113,4 +142,9 @@ extension Notification.Name {
     static let nextTab = Notification.Name("com.claudybro.nextTab")
     static let previousTab = Notification.Name("com.claudybro.previousTab")
     static let selectTabByIndex = Notification.Name("com.claudybro.selectTabByIndex")
+    static let openCommandPalette = Notification.Name("com.claudybro.openCommandPalette")
+    static let splitPaneVertical = Notification.Name("com.claudybro.splitPaneVertical")
+    static let splitPaneHorizontal = Notification.Name("com.claudybro.splitPaneHorizontal")
+    static let closePane = Notification.Name("com.claudybro.closePane")
+    static let nextPane = Notification.Name("com.claudybro.nextPane")
 }

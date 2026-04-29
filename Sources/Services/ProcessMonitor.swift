@@ -3,7 +3,9 @@ import Foundation
 
 /// Monitors the child process tree of the shell process.
 /// Detects truly orphaned node processes while excluding legitimate MCP servers.
-/// Idle MCP servers are killed after a configurable timeout — Claude Code auto-restarts them.
+/// For CLIs that auto-restart MCPs (see CLIProvider.autoRestartsKilledMCPs),
+/// idle MCP servers are reaped after a configurable timeout. For CLIs that
+/// don't, the entire CLI subtree is protected.
 final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
@@ -240,14 +242,14 @@ final class ProcessMonitor: ObservableObject {
             tracked.memoryBytes = ProcessTreeQuery.getProcessMemory(pid: entry.pid)
 
             // The CLI process itself is always protected from idle-kill.
-            // For non-Claude CLIs (Gemini, Kilo, Codex), protect the
-            // entire subtree — those CLIs don't auto-restart killed
-            // children, so killing their workers crashes them.
-            // For Claude Code, only protect the CLI PID — Claude
-            // auto-restarts MCPs and accumulates idle one-shot helpers
-            // (head, npm, node workers, subagents) that need cleanup.
+            // CLIs that don't auto-restart their MCP children get full
+            // subtree protection — killing a worker would crash the CLI.
+            // CLIs that DO auto-restart (e.g. Claude) only protect the
+            // CLI PID itself, so we can reap idle one-shot helpers
+            // (head, npm, node workers, subagents) that accumulate.
+            let protectsSubtree = !(detectedCLI?.autoRestartsKilledMCPs ?? true)
             let isProtected = (entry.pid == cliPid)
-                || (detectedCLI != .claude && cliOwnedPids.contains(entry.pid))
+                || (protectsSubtree && cliOwnedPids.contains(entry.pid))
 
             if !isProtected {
                 let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
@@ -275,8 +277,8 @@ final class ProcessMonitor: ObservableObject {
 
                 // Orphan detection — non-MCP descendants get surfaced in the
                 // UI with a countdown, both in AND out of the CLI subtree.
-                // In-subtree leaks (duplicate Claude workers, one-shot
-                // `head`/`npm`, Task subagent helpers) used to be invisible
+                // In-subtree leaks (duplicate CLI workers, one-shot
+                // `head`/`npm`, subagent helpers) used to be invisible
                 // because this block gated on `isOutsideCliTree`; users had
                 // no way to tell why the child-process count was climbing.
                 // MCP servers are still excluded — they're handled silently
@@ -381,7 +383,7 @@ final class ProcessMonitor: ObservableObject {
         } else if cliStillRunning {
             // CLI is (still/again) running — cancel any pending cleanup.
             // IMPORTANT: do NOT reset cliSubtreeSnapshot here. If the user
-            // bounced Claude within the grace period, the previous run's MCP
+            // bounced the CLI within the grace period, the previous run's MCP
             // servers may still be alive (reparented under the shell) but
             // unreachable from the new cliPid — they won't be in cliOwnedPids.
             // Keeping the old accumulated snapshot ensures they still get
@@ -419,8 +421,10 @@ final class ProcessMonitor: ObservableObject {
         // (descendants like MCP servers may have different CWDs)
         let cwd = ProcessTreeQuery.getProcessCurrentDirectory(pid: shellPID) ?? ""
 
-        // Read context usage from statusline JSON (Claude-specific, skip for other CLIs)
-        let newContextUsage: ContextUsage? = (detectedCLI == .claude) ? pollContextFile() : nil
+        // Read context usage from statusline JSON. Only CLIs that emit
+        // telemetry (see CLIProvider.supportsContextTelemetry) populate it.
+        let supportsTelemetry = detectedCLI?.supportsContextTelemetry ?? false
+        let newContextUsage: ContextUsage? = supportsTelemetry ? pollContextFile() : nil
 
         // Adaptive poll interval: fast when CLI active, slow when fully idle
         adjustPollInterval(cliActive: cliStillRunning)
@@ -433,7 +437,7 @@ final class ProcessMonitor: ObservableObject {
             if cwd != self.currentDirectory { self.currentDirectory = cwd }
             if let ctx = newContextUsage {
                 self.updateContextUsage(ctx)
-            } else if detectedCLI != .claude {
+            } else if !supportsTelemetry {
                 self.clearContextUsage()
             }
         }
