@@ -31,9 +31,18 @@ final class CLIProcessManager: ObservableObject {
         !detectedProviders.isEmpty || npxAvailable
     }
 
-    /// Always returns the user's login shell.
+    /// The shell to spawn: the configured one, or `$SHELL` when set to "auto".
+    ///
+    /// Falls back to `$SHELL` if the configured path isn't executable, so a
+    /// typo in Settings leaves a working terminal rather than a dead pane.
     func resolveShellCommand() -> (executable: String, args: [String], environment: [String]?) {
-        return (Constants.defaultShell, ["-l"], buildEnvironment())
+        let configured = AppConfiguration.shared.shellPath
+        let expanded = (configured as NSString).expandingTildeInPath
+        let executable = configured != "auto"
+            && FileManager.default.isExecutableFile(atPath: expanded)
+            ? expanded
+            : Constants.defaultShell
+        return (executable, ["-l"], buildEnvironment())
     }
 
     // MARK: - Discovery

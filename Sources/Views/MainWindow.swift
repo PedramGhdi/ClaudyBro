@@ -1,11 +1,15 @@
+import SwiftTerm
 import SwiftUI
 
 /// Root content view: tab bar + launch toolbar + terminal sessions + status bar.
 struct MainWindow: View {
     @StateObject private var tabManager = TabManager()
+    @ObservedObject private var config = AppConfiguration.shared
     @State private var showSettings = false
     @State private var showCommandPalette = false
     @State private var windowTitle: String = "ClaudyBro"
+
+    private var isTranslucent: Bool { config.backgroundOpacity < 1.0 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,7 +45,20 @@ struct MainWindow: View {
             }
         }
         .frame(minWidth: 400, minHeight: 300)
-        .background(Color(nsColor: AppConfiguration.shared.currentTheme.background))
+        .background {
+            // With a translucent terminal background, whatever sits behind it
+            // shows through. Blur frosts it; otherwise it is the plain desktop.
+            if isTranslucent {
+                if config.backgroundBlur {
+                    VisualEffectBackground()
+                } else {
+                    Color.clear
+                }
+            } else {
+                Color(nsColor: config.currentTheme.background)
+            }
+        }
+        .background(WindowConfigurator(isTranslucent: isTranslucent))
         .preferredColorScheme(.dark)
         .navigationTitle(windowTitle)
         .onAppear { AppDelegate.tabManager = tabManager }
@@ -104,13 +121,15 @@ struct MainWindow: View {
 
     private func updateWindowTitle() {
         guard let tab = tabManager.activeTab else { windowTitle = "ClaudyBro"; return }
-        let dir = tab.activePane.processMonitor.currentDirectory
-        guard !dir.isEmpty else { windowTitle = "ClaudyBro"; return }
-        // Keep lastWorkingDirectory fresh so app restart uses the latest cwd
-        UserDefaults.standard.set(dir, forKey: "lastWorkingDirectory")
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let abbreviated = dir.hasPrefix(home) ? "~" + dir.dropFirst(home.count) : dir
-        if abbreviated != windowTitle { windowTitle = abbreviated }
+        let monitor = tab.activePane.processMonitor
+        // Keep lastWorkingDirectory fresh so app restart uses the latest cwd.
+        // Always the real path, never the shell-set title.
+        if !monitor.currentDirectory.isEmpty {
+            UserDefaults.standard.set(monitor.currentDirectory, forKey: "lastWorkingDirectory")
+        }
+        let title = monitor.displayTitle
+        let resolved = title.isEmpty ? "ClaudyBro" : title
+        if resolved != windowTitle { windowTitle = resolved }
     }
 }
 
@@ -349,7 +368,50 @@ struct SettingsSheet: View {
                     }
                 }
             }
+            Section("Shell") {
+                LabeledContent("Shell") {
+                    TextField("auto", text: $config.shellPath)
+                        .frame(width: 200)
+                        .textFieldStyle(.roundedBorder)
+                }
+                Text("\"auto\" uses $SHELL (\(URL(fileURLWithPath: Constants.defaultShell).lastPathComponent)). New terminals only.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                LabeledContent("Run on start") {
+                    TextField("none", text: $config.startupCommand)
+                        .frame(width: 200)
+                        .textFieldStyle(.roundedBorder)
+                }
+                Text("Runs in every new terminal, tab, and split.")
+                    .font(.caption).foregroundColor(.secondary)
+
+                Toggle("Restore tabs and splits on launch", isOn: $config.restoreSession)
+                Text("Rebuilds the layout and working directories. Programs that were running are not restarted.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
             Section("Terminal") {
+                LabeledContent("Background") {
+                    HStack {
+                        Slider(value: $config.backgroundOpacity, in: 0.3...1.0)
+                        Text("\(Int(config.backgroundOpacity * 100))%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+                Toggle("Blur behind window", isOn: $config.backgroundBlur)
+                    .disabled(config.backgroundOpacity >= 1.0)
+
+                Picker("Cursor", selection: $config.cursorStyle) {
+                    ForEach(CursorStyle.allCases, id: \.tagName) { style in
+                        Text(style.displayName).tag(style.tagName)
+                    }
+                }
+
+                Toggle("Copy on select", isOn: $config.copyOnSelect)
+
+                ShellIntegrationRow()
+
                 Toggle("Full scrollback for AI CLIs", isOn: $config.disableAltScreen)
                 Text("Keeps CLI conversation history in the scrollback instead of a throwaway screen. Applies only while a CLI is in the foreground — vim, less, htop and SSH sessions always get a normal full-screen view.")
                     .font(.caption).foregroundColor(.secondary)
@@ -412,6 +474,58 @@ struct SettingsSheet: View {
                     dismiss()
                 }
             }
+        }
+    }
+}
+
+// MARK: - Shell Integration
+
+/// Settings row for installing the OSC 133 shell hooks.
+///
+/// Deliberately a button rather than something done at launch: it appends a
+/// line to the user's rc file, and silently editing someone's shell config is
+/// not a thing an app should do on its own.
+private struct ShellIntegrationRow: View {
+    @State private var installed = false
+    @State private var error: String?
+
+    private var shell: ShellIntegration.Shell? { ShellIntegration.current }
+
+    var body: some View {
+        Group {
+            if let shell {
+                LabeledContent("Prompt marks (⌘↑ / ⌘↓)") {
+                    if installed {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .labelStyle(.titleAndIcon)
+                    } else {
+                        Button("Install for \(shell.rawValue)") { install(shell) }
+                    }
+                }
+                Text(installed
+                    ? "Adds a line to ~/.\(shell.rawValue)rc sourcing \(shell.scriptName). Restart your shell if jumping does nothing yet."
+                    : "Jumping between prompts needs your shell to mark where they start. This appends one line to ~/.\(shell.rawValue)rc.")
+                    .font(.caption).foregroundColor(.secondary)
+            } else {
+                Text("Prompt marks require zsh or bash; \(URL(fileURLWithPath: Constants.defaultShell).lastPathComponent) is not supported yet.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+
+            if let error {
+                Text(error).font(.caption).foregroundColor(.red)
+            }
+        }
+        .onAppear { installed = shell.map(ShellIntegration.isInstalled) ?? false }
+    }
+
+    private func install(_ shell: ShellIntegration.Shell) {
+        do {
+            try ShellIntegration.install(for: shell)
+            installed = true
+            error = nil
+        } catch {
+            self.error = "Could not write to ~/.\(shell.rawValue)rc: \(error.localizedDescription)"
         }
     }
 }

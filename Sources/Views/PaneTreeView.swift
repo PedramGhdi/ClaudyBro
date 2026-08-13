@@ -50,7 +50,9 @@ private struct PaneLeafView: View {
                 processManager: pane.processManager,
                 processMonitor: pane.processMonitor,
                 isActive: isFocused,
-                initialDirectory: pane.initialDirectory
+                initialDirectory: pane.initialDirectory,
+                paneId: pane.id,
+                tabId: tab.id
             )
             .onTapGesture {
                 if tab.activePaneId != pane.id { tab.activePaneId = pane.id }

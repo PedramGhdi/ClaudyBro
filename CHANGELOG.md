@@ -2,6 +2,37 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.14.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.14.0) — Terminal Parity: Find, Themes, Transparency, Shell Integration, Session Restore
+
+### Dependencies
+- **SwiftTerm 1.12.0 → 1.18.0.** Six upstream releases, bringing alternate-screen margin and wrapped-line fixes, a fix for stale rows repainting while scrolled back, selection translation when rows move, mouse motion/focus reporting fixes, retain-cycle fixes that were leaking `Terminal` and `LocalProcess`, PTY read backpressure, BiDi support, and OSC 133. **Idle memory dropped from 118 MB to 81 MB** — a 31% reduction, entirely from the upgrade.
+- **`Package.resolved` is now committed.** `Package.swift` declared `from: "1.0.0"` while the lockfile was gitignored, so anyone cloning the repo built against a different SwiftTerm than the released binaries. Releases are now reproducible.
+- **The SwiftTerm patch no longer fails silently.** `build.sh` applied `patches/swiftterm-selection.patch` with `2>/dev/null || true`, so an upgrade that broke the patch would quietly ship a build missing the behaviour. It now detects "already applied", and aborts the build with an explanation otherwise. The patch itself shrank from 4 hunks to 2 — upstream reimplemented the word-selection drag pivot in 1.18, and more completely than the local version, so only the `@ + ~` word characters remain.
+
+### New Features
+- **Find in scrollback (⌘F)** — with ⌘G / ⌘⇧G for next and previous, and ⌘E to search for the selection. SwiftTerm has shipped a find bar and search engine all along; it surfaces only through the standard Edit ▸ Find menu items, which this app had never registered.
+- **Font size shortcuts** — ⌘+ / ⌘− / ⌘0, applied live across every tab and split. ⌘= works too, so the shortcut needs no Shift.
+- **Shell-set tab and window titles (OSC 0/1/2) and working directory (OSC 7)** — both were being routed to `processDelegate`, which the app never assigns, so they were silently discarded and titles came from polling the process table up to 15 s behind. Remote OSC 7 reports are ignored, so an SSH session's remote path can't leak into a new local tab.
+- **Prompt navigation (⌘↑ / ⌘↓)** — jump between shell prompts using OSC 133 marks. Settings ▸ Shell installs the hooks for zsh or bash; it appends exactly one line to your rc file, and only when you press the button.
+- **Background transparency and blur** — adjustable opacity with an optional frosted backdrop.
+- **Custom themes** — drop JSON into `~/.config/claudybro/themes/`. Hex colors, `#abc` shorthand accepted, `#` optional. Reusing a built-in id overrides that preset. A malformed file is skipped with a readable reason rather than taking the app down.
+- **Cursor style** — block, underline, or bar, steady or blinking. The cursor also follows the active theme now; it had been using SwiftTerm's default colour regardless of theme.
+- **Copy on select.**
+- **Configurable shell and startup command** — the shell was hardcoded to `$SHELL -l`. An unusable configured path falls back to `$SHELL` rather than leaving a dead pane.
+- **Session restore** — tabs, nested split layouts, and working directories are rebuilt on launch. Programs that were running are deliberately not restarted.
+- **Broadcast input (⌘⇧I)** — type once into every pane of a tab. Mirrored at the byte level on the way to the PTY, so arrow keys and other escape sequences arrive exactly as sent. Scoped to the current tab, and never persisted across launches.
+- **Config file live-reload** — `config.json` is watched, so external edits apply immediately. Previously `load()` ran once at startup and the next in-app save silently overwrote whatever you had edited.
+
+### Internal
+- Deleted dead code: `ImagePasteHandler.swift` (80 lines, never referenced — the real ⌘V path sends Ctrl+V and lets the CLI read the clipboard), `OSCResponseFilter.swift` (49 lines, never instantiated), and `Constants.ansiPalette` (a stale duplicate of the ClaudyBro Dark palette, unused since the theme system landed).
+- `AppCommands` centralises menu, palette, and key-handler actions so a shortcut and its menu item cannot drift apart.
+- `ThemeFile` keeps hex parsing and disk loading out of `Theme`, which stays a plain in-memory value type.
+- Config live-reload watches the *directory*, not the file: `save()` writes atomically, which replaces the inode and would detach a file-descriptor watcher after the first save.
+
+### Not included
+- **Quick terminal (global hotkey dropdown)** is deferred to v1.15.0. It needs a new borderless panel window and a Carbon hotkey registration, and it is not meaningfully verifiable without interactive GUI testing — it deserves its own release rather than being appended to this one.
+- **Font ligatures** are not offered: SwiftTerm renders per-cell and has no ligature support, so a setting for it would do nothing.
+
 ## [v1.13.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.13.1) — SSH & Full-Screen App Fixes
 
 Fixes [#19](https://github.com/PedramGhdi/ClaudyBro/issues/19). Both bugs were reported against SSH but affected every long-running interactive command.

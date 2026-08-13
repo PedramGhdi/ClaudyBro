@@ -10,7 +10,8 @@ xcuserdata/
 
 # Swift Package Manager
 .swiftpm/
-Package.resolved
+# Package.resolved IS committed: this is an app, not a library, so the exact
+# dependency versions a release was built from need to be reproducible.
 
 # macOS
 .DS_Store

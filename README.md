@@ -54,7 +54,7 @@ Standard terminals work fine with Claude Code, but have friction points that add
 
 - **Context usage status bar** — Live display of context window usage %, model name, session cost, and effort level directly in ClaudyBro's bottom status bar. Auto-configures Claude Code's statusLine on first launch — no setup needed.
 
-- **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 100-line scrollback, 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled.
+- **Lightweight by design** — No Electron, no web views, no bundled runtime. Pure Swift + SwiftTerm with aggressive memory tuning: 1MB image cache (vs SwiftTerm's 320MB default), sixel disabled. ~80MB RSS with an idle shell.
 
 - **Gemini CLI support** — Synchronous PTY writes prevent terminal response leaks that crash Gemini. The orphan monitor detects and protects the active CLI's process tree, so Gemini's child processes aren't mistakenly killed.
 
@@ -82,7 +82,12 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | **Remember selection** | Last-used CLI and launch mode (e.g., Skip Permissions) persisted across restarts |
 | **Directory persistence** | Remembers your last working directory across app restarts |
 | **Check for Updates** | Menu bar item checks GitHub Releases for new versions |
-| **Theme** | Dark theme matching Claude Code's aesthetic |
+| **Themes** | Four built-in dark themes, plus your own from `~/.config/claudybro/themes/*.json` |
+| **Find** | Cmd+F search across the full scrollback |
+| **Transparency** | Adjustable background opacity with optional blur |
+| **Shell integration** | Optional OSC 133 prompt marks for Cmd+Up / Cmd+Down navigation |
+| **Session restore** | Tabs, splits, and working directories come back on launch |
+| **Broadcast input** | Type once into every pane of a tab |
 | **Settings** | Font size, CLI binary paths, orphan/auto-kill timeouts, MCP idle kill timeout |
 
 ## Screenshots
@@ -106,6 +111,19 @@ Standard terminals work fine with Claude Code, but have friction points that add
 | Cmd+Arrow Right | End (end of line) |
 | Cmd+Shift+K | Kill orphaned processes |
 | Cmd+, | Settings |
+| Cmd+F | Find in scrollback |
+| Cmd+G / Cmd+Shift+G | Find next / previous |
+| Cmd+E | Use selection for find |
+| Cmd+Plus / Cmd+Minus / Cmd+0 | Bigger / smaller / actual size |
+| Cmd+Up / Cmd+Down | Jump to previous / next prompt |
+| Cmd+Shift+P | Command palette |
+| Cmd+D / Cmd+Shift+D | Split vertically / horizontally |
+| Cmd+Shift+W | Close pane |
+| Cmd+Option+] | Next pane |
+| Cmd+Shift+I | Broadcast input to all panes |
+| Cmd+Delete | Kill line |
+| Shift+Enter | Newline without submitting |
+| Option+Delete | Delete word backwards |
 
 ## Install
 
@@ -156,7 +174,7 @@ ClaudyBro.app (3.9 MB)
 ├── Services
 │   ├── CLIProcessManager   — Multi-CLI discovery and shell state tracking
 │   ├── ProcessMonitor      — Child process tree tracking (sysctl, not ps)
-│   ├── ImagePasteHandler   — NSPasteboard → temp PNG → path injection
+│   ├── ShellIntegration    — Optional OSC 133 prompt marks for zsh/bash
 │   └── UpdateChecker       — GitHub Releases version check
 └── Utilities
     └── ProcessTreeQuery    — KERN_PROC_ALL, KERN_PROCARGS2, proc_pidinfo
@@ -164,12 +182,17 @@ ClaudyBro.app (3.9 MB)
 
 ## How Orphan Detection Works
 
+The point is to reap what an AI CLI leaves behind — MCP servers, subagent workers, `npm`/`head` one-shots — without ever touching something you started yourself.
+
 1. On CLI start, ClaudyBro records the shell PID
-2. Every 5 seconds (background thread), it queries all descendant processes via `sysctl`
-3. For each `node` process, it samples CPU time via `proc_pidinfo(PROC_PIDTASKINFO)`
-4. If CPU time hasn't changed for 2+ consecutive polls (~10s), the process is marked as an orphan candidate
-5. Command-line args are inspected via `KERN_PROCARGS2` — processes containing "mcp", "language-server", "tsserver", "brave-search", "shadcn", "playwright", or "context7" are excluded (legitimately idle MCP servers)
-6. After the configured timeout (default 30s), confirmed orphans appear in the status bar with a detail panel
+2. Every 2-15 seconds (background thread, interval adapts to activity), it queries all descendant processes via `sysctl`
+3. It samples CPU time for each via `proc_pidinfo(PROC_PIDTASKINFO)`
+4. **Only processes seen inside an AI CLI's subtree are ever eligible for automatic termination.** A command you typed — `ssh`, `vim`, `docker exec`, a suspended job — is never in that set, so it is listed but never killed, no matter how idle it looks
+5. The job currently attached to the terminal, read via `tcgetpgrp()`, is off-limits regardless
+6. Among eligible processes, one whose CPU time hasn't moved for 2+ consecutive polls becomes an orphan candidate; after the configured timeout (default 30s) it is confirmed and shown in the status bar
+7. Command-line args are inspected via `KERN_PROCARGS2` — MCP servers and language servers are hidden from the orphan panel (they're legitimately idle) but still reaped by the idle timer, since CLIs restart them on demand
+
+Automatic cleanup can be turned off entirely in Settings → Process Monitor.
 
 ## Configuration
 
@@ -182,15 +205,52 @@ Settings are stored at `~/.config/claudybro/config.json`:
   "claudePath": "auto",
   "geminiPath": "auto",
   "codexPath": "auto",
-  "theme": "dark",
+  "kiloPath": "auto",
+  "theme": "claudybro-dark",
+  "cursorStyle": "steadyBlock",
+  "backgroundOpacity": 1.0,
+  "backgroundBlur": true,
+  "copyOnSelect": false,
+  "shellPath": "auto",
+  "startupCommand": "",
+  "restoreSession": true,
   "orphanTimeoutSeconds": 30,
   "processMonitorInterval": 5,
   "autoKillTimeoutSeconds": 90,
+  "autoKillEnabled": true,
+  "mcpIdleKillSeconds": 90,
+  "disableAltScreen": true,
   "preferredCLI": "claude",
   "preferredDangerousMode": false,
-  "mcpIdleKillSeconds": 90
+  "pinnedProcessDescriptions": [],
+  "savedPrompts": []
 }
 ```
+
+The file is watched, so edits made outside the app are picked up live.
+
+### Custom themes
+
+Drop a JSON file into `~/.config/claudybro/themes/`:
+
+```json
+{
+  "id": "my-theme",
+  "name": "My Theme",
+  "background": "#1a1a2e",
+  "foreground": "#eeeeee",
+  "statusBarBackground": "#13131f",
+  "cursor": "#ffcc00",
+  "ansi": [
+    "#1a1a2e", "#ff5555", "#50fa7b", "#ffcc00",
+    "#598fff", "#d161ff", "#00cdcd", "#e0e0e0",
+    "#4b4b64", "#ff6e6e", "#69ff94", "#ffe150",
+    "#78aaff", "#e182ff", "#50e6e6", "#ffffff"
+  ]
+}
+```
+
+`statusBarBackground` and `cursor` are optional. Reusing a built-in `id` overrides that preset.
 
 ## Requirements
 

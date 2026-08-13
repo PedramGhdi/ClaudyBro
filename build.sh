@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.13.1"
+VERSION="1.14.0"
 APP_NAME="ClaudyBro"
 APP_DIR="build/$APP_NAME.app"
 DMG_DIR="build/dmg"
@@ -15,9 +15,22 @@ build)
 
     swift package resolve
 
-    # Patch SwiftTerm: word selection improvements (email chars, drag pivot)
-    if [ -d ".build/checkouts/SwiftTerm" ] && [ -f "patches/swiftterm-selection.patch" ]; then
-        git -C .build/checkouts/SwiftTerm apply ../../../patches/swiftterm-selection.patch 2>/dev/null || true
+    # Patch SwiftTerm: treat @ + ~ as word characters so double-clicking selects
+    # whole emails and paths. Failures are fatal — silently skipping would ship a
+    # build quietly missing the behaviour, which is how a dependency bump breaks
+    # things without anyone noticing.
+    PATCH="patches/swiftterm-selection.patch"
+    if [ -d ".build/checkouts/SwiftTerm" ] && [ -f "$PATCH" ]; then
+        if git -C .build/checkouts/SwiftTerm apply --check --reverse "../../../$PATCH" 2>/dev/null; then
+            echo "  SwiftTerm patch: already applied"
+        elif git -C .build/checkouts/SwiftTerm apply "../../../$PATCH" 2>/dev/null; then
+            echo "  SwiftTerm patch: applied"
+        else
+            echo "ERROR: $PATCH does not apply to this SwiftTerm checkout." >&2
+            echo "       SwiftTerm was likely upgraded. Rebase the patch, or drop" >&2
+            echo "       it if the change landed upstream." >&2
+            exit 1
+        fi
     fi
 
     swift build -c release \

@@ -11,6 +11,24 @@ final class AppConfiguration: ObservableObject {
     @Published var codexPath: String = "auto"
     @Published var kiloPath: String = "auto"
     @Published var theme: String = Theme.claudyBroDark.id
+    /// SwiftTerm `CursorStyle.tagName`, e.g. "steadyBlock" / "blinkBar".
+    @Published var cursorStyle: String = "steadyBlock"
+    /// Terminal background alpha, 0.3–1.0. Below 1 the window stops being opaque.
+    @Published var backgroundOpacity: Double = 1.0
+    /// Frost whatever shows through a translucent background, rather than
+    /// letting the raw desktop through.
+    @Published var backgroundBlur: Bool = true
+    @Published var copyOnSelect: Bool = false
+    /// Shell to spawn, or "auto" for `$SHELL`.
+    @Published var shellPath: String = "auto"
+    /// Rebuild the previous tab and split layout on launch.
+    @Published var restoreSession: Bool = true
+    /// Command run in every new terminal once the shell is ready. Empty = none.
+    @Published var startupCommand: String = ""
+    /// Mirror typing from the focused pane into the other panes of its tab.
+    /// Not persisted — a mode this sticky should never survive a relaunch
+    /// unnoticed, since every keystroke would go somewhere unexpected.
+    @Published var broadcastInput: Bool = false
     @Published var orphanTimeoutSeconds: Int = 30
     @Published var processMonitorInterval: Int = 5
     @Published var autoKillTimeoutSeconds: Int = 90
@@ -31,8 +49,47 @@ final class AppConfiguration: ObservableObject {
     /// Resolved theme from the persisted id. Falls back to ClaudyBro Dark for unknown ids.
     var currentTheme: Theme { Theme.preset(id: theme) }
 
+    /// Modification date of the last write we made ourselves, so the watcher can
+    /// tell our own saves apart from someone editing the file by hand.
+    private var lastSelfWrite: Date?
+    private var configWatcher: DispatchSourceFileSystemObject?
+
     private init() {
         load()
+        startWatchingConfigFile()
+    }
+
+    // MARK: - Live reload
+
+    /// Reload when `config.json` is edited outside the app.
+    ///
+    /// The directory is watched rather than the file: `save()` writes
+    /// atomically, which replaces the inode and would silently detach a
+    /// file-descriptor watcher after the first save.
+    private func startWatchingConfigFile() {
+        let fd = open(Constants.configDirectory.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write], queue: .main
+        )
+        source.setEventHandler { [weak self] in self?.reloadIfEditedExternally() }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        configWatcher = source
+    }
+
+    private func reloadIfEditedExternally() {
+        guard let modified = try? FileManager.default
+            .attributesOfItem(atPath: Constants.configFile.path)[.modificationDate] as? Date
+        else { return }
+
+        // Our own save() already reflects these values in memory; reloading
+        // would be redundant, and posting would loop.
+        if let lastSelfWrite, modified <= lastSelfWrite { return }
+
+        load()
+        NotificationCenter.default.post(name: .configurationChanged, object: nil)
     }
 
     func load() {
@@ -47,6 +104,13 @@ final class AppConfiguration: ObservableObject {
             if let v = json["codexPath"] as? String { codexPath = v }
             if let v = json["kiloPath"] as? String { kiloPath = v }
             if let v = json["theme"] as? String { theme = v }
+            if let v = json["cursorStyle"] as? String { cursorStyle = v }
+            if let v = json["backgroundOpacity"] as? Double { backgroundOpacity = v }
+            if let v = json["backgroundBlur"] as? Bool { backgroundBlur = v }
+            if let v = json["copyOnSelect"] as? Bool { copyOnSelect = v }
+            if let v = json["shellPath"] as? String { shellPath = v }
+            if let v = json["restoreSession"] as? Bool { restoreSession = v }
+            if let v = json["startupCommand"] as? String { startupCommand = v }
             if let v = json["orphanTimeoutSeconds"] as? Int { orphanTimeoutSeconds = v }
             if let v = json["processMonitorInterval"] as? Int { processMonitorInterval = v }
             if let v = json["autoKillTimeoutSeconds"] as? Int { autoKillTimeoutSeconds = v }
@@ -79,6 +143,13 @@ final class AppConfiguration: ObservableObject {
             "codexPath": codexPath,
             "kiloPath": kiloPath,
             "theme": theme,
+            "cursorStyle": cursorStyle,
+            "backgroundOpacity": backgroundOpacity,
+            "backgroundBlur": backgroundBlur,
+            "copyOnSelect": copyOnSelect,
+            "shellPath": shellPath,
+            "restoreSession": restoreSession,
+            "startupCommand": startupCommand,
             "orphanTimeoutSeconds": orphanTimeoutSeconds,
             "processMonitorInterval": processMonitorInterval,
             "autoKillTimeoutSeconds": autoKillTimeoutSeconds,
@@ -93,6 +164,8 @@ final class AppConfiguration: ObservableObject {
         do {
             let data = try JSONSerialization.data(withJSONObject: json, options: .prettyPrinted)
             try data.write(to: Constants.configFile, options: .atomic)
+            lastSelfWrite = try? FileManager.default
+                .attributesOfItem(atPath: Constants.configFile.path)[.modificationDate] as? Date
         } catch {
             // Best-effort save
         }

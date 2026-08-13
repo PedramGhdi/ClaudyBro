@@ -10,6 +10,9 @@ final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
     @Published var currentDirectory: String = ""
+    /// Title the shell set via OSC 0/1/2, if any. Preferred over the derived
+    /// directory name for tab and window titles.
+    @Published var hostTitle: String?
     @Published var contextUsage: ContextUsage = ContextUsage()
     /// Cached CLI state — set by background poll, read by main thread. Avoids expensive sysctl on render.
     @Published var activeCLI: CLIProvider? = nil
@@ -23,6 +26,22 @@ final class ProcessMonitor: ObservableObject {
     var autoKillEnabled: Bool = true
 
     var hasActiveProcesses: Bool { !childProcesses.isEmpty }
+
+    /// Working directory with `$HOME` collapsed to `~`.
+    var abbreviatedDirectory: String {
+        guard !currentDirectory.isEmpty else { return "" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard currentDirectory.hasPrefix(home) else { return currentDirectory }
+        return "~" + currentDirectory.dropFirst(home.count)
+    }
+
+    /// Label for tabs and the window title. A title the shell set itself wins:
+    /// it is what the user configured their prompt to say, and it stays
+    /// meaningful over SSH where the local working directory does not.
+    var displayTitle: String {
+        if let hostTitle, !hostTitle.isEmpty { return hostTitle }
+        return abbreviatedDirectory
+    }
 
     private var timer: Timer?
     private var shellPID: pid_t = 0
@@ -152,6 +171,16 @@ final class ProcessMonitor: ObservableObject {
         if merged.effort == nil { merged.effort = contextUsage.effort }
         guard merged != contextUsage else { return }
         contextUsage = merged
+    }
+
+    /// Record a working directory the shell reported itself (OSC 7).
+    ///
+    /// Same value the poll derives from the process table, but delivered the
+    /// moment it changes instead of up to `processMonitorInterval` later, so
+    /// tab titles and directory inheritance stop lagging behind.
+    func reportHostDirectory(_ path: String) {
+        guard !path.isEmpty, path != currentDirectory else { return }
+        currentDirectory = path
     }
 
     /// Clear context usage (e.g., when CLI exits).

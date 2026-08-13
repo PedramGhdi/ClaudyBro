@@ -9,12 +9,35 @@ struct Theme: Identifiable, Hashable {
     let foreground: NSColor
     let statusBarBackground: NSColor
     let ansiPalette: [SwiftTerm.Color]
+    /// Cursor color. Optional so presets need not spell it out; when absent the
+    /// cursor follows the foreground, which is the usual terminal convention.
+    var cursor: NSColor?
+
+    var resolvedCursor: NSColor { cursor ?? foreground }
 }
 
 extension Theme {
-    static let allPresets: [Theme] = [
+    static let builtInPresets: [Theme] = [
         .claudyBroDark, .warpDarkInspired, .solarizedDark, .dracula,
     ]
+
+    /// Built-in themes plus anything in `~/.config/claudybro/themes`.
+    ///
+    /// Re-read on each access so dropping in a theme file and reopening
+    /// Settings is enough to see it — no relaunch. A user theme sharing an id
+    /// with a built-in one replaces it, which is how you retune a preset
+    /// without forking the app.
+    static var allPresets: [Theme] {
+        var themes = builtInPresets
+        for custom in loadUserThemes() {
+            if let index = themes.firstIndex(where: { $0.id == custom.id }) {
+                themes[index] = custom
+            } else {
+                themes.append(custom)
+            }
+        }
+        return themes
+    }
 
     static func preset(id: String) -> Theme {
         allPresets.first { $0.id == id } ?? .claudyBroDark
