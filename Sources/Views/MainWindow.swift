@@ -275,22 +275,17 @@ struct LaunchToolbar: View {
         }
         command += "\n"
 
-        // If a CLI is already running, kill it first (Ctrl+C), then launch the new one
-        let keywords = CLIProvider.allCases.map(\.processKeyword)
-        let cliRunning = processMonitor.childProcesses.contains { proc in
-            let desc = proc.processDescription.lowercased()
-            return keywords.contains { desc.contains($0) }
-        }
-        if cliRunning {
+        // If a CLI is already running, kill it first (Ctrl+C), then launch the new one.
+        // Identity comes from the cached provider rather than a substring match
+        // on the description — the latter also matched innocent commands that
+        // merely mentioned a CLI name, e.g. `ssh user@codex-prod`.
+        let cliPids = processMonitor.childProcesses
+            .filter { $0.cliProvider != nil }
+            .map(\.pid)
+
+        if !cliPids.isEmpty {
             // Kill the running CLI process and wait for it to exit before launching new one
-            var cliPids: [pid_t] = []
-            for proc in processMonitor.childProcesses {
-                let desc = proc.processDescription.lowercased()
-                if keywords.contains(where: { desc.contains($0) }) {
-                    kill(proc.pid, SIGTERM)
-                    cliPids.append(proc.pid)
-                }
-            }
+            for pid in cliPids { kill(pid, SIGTERM) }
             // Poll until the CLI process is gone, then send the new command
             DispatchQueue.global(qos: .userInitiated).async {
                 let deadline = Date().addingTimeInterval(5)
@@ -355,7 +350,9 @@ struct SettingsSheet: View {
                 }
             }
             Section("Terminal") {
-                Toggle("Full scrollback (disable alternate screen)", isOn: $config.disableAltScreen)
+                Toggle("Full scrollback for AI CLIs", isOn: $config.disableAltScreen)
+                Text("Keeps CLI conversation history in the scrollback instead of a throwaway screen. Applies only while a CLI is in the foreground — vim, less, htop and SSH sessions always get a normal full-screen view.")
+                    .font(.caption).foregroundColor(.secondary)
             }
             Section("Saved Prompts") {
                 if config.savedPrompts.isEmpty {
@@ -387,6 +384,10 @@ struct SettingsSheet: View {
                 }
             }
             Section("Process Monitor") {
+                Toggle("Automatically clean up leftover processes", isOn: $config.autoKillEnabled)
+                Text("Only processes started by an AI CLI are ever terminated — MCP servers, subagent workers and one-shot helpers it left behind. Commands you run yourself (ssh, vim, docker…) are listed but never killed.")
+                    .font(.caption).foregroundColor(.secondary)
+
                 StepperField(label: "Auto-kill orphans after:",
                              value: $config.autoKillTimeoutSeconds, range: 0...600, step: 10)
                 Text("0s = kill immediately once an orphan is confirmed")
@@ -397,7 +398,7 @@ struct SettingsSheet: View {
                              value: $config.processMonitorInterval, range: 1...30, step: 1)
                 StepperField(label: "Kill idle MCP servers after:",
                              value: $config.mcpIdleKillSeconds, range: 0...600, step: 30)
-                Text("Kills idle MCPs under CLIs that auto-restart them (e.g. Claude). For other CLIs, the entire CLI subtree is protected. 0s = kill as soon as idle.")
+                Text("Applies to MCPs under CLIs that auto-restart them (e.g. Claude). For other CLIs the whole subtree is protected. 0s = kill as soon as idle.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }

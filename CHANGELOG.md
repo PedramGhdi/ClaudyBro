@@ -2,6 +2,32 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.13.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.13.1) — SSH & Full-Screen App Fixes
+
+Fixes [#19](https://github.com/PedramGhdi/ClaudyBro/issues/19). Both bugs were reported against SSH but affected every long-running interactive command.
+
+### Bug Fixes
+- **Fixed interactive processes being killed for sitting idle** — SSH sessions dropped after ~90 seconds, and so did `vim`, `less`, `man`, `docker exec -it`, `tail -f`, `ssh -N` tunnels and suspended jobs. The "kill idle MCP servers" pass in `ProcessMonitor.poll()` applied to *every* descendant of the pane's shell that wasn't the detected AI CLI — the MCP/language-server list only hid processes from the orphan panel, it never exempted anything from being killed. Because eligibility was decided purely by CPU usage (`cpuDelta < 0.01`), any process blocked on the network or waiting for a keypress looked dead. Worse, `lastActiveTime` only refreshed when a process burned >10 ms of CPU *between polls*, so a session you were lightly typing in could still be killed mid-use.
+
+  Eligibility is now decided by **provenance instead of idleness**: a process is only ever terminated automatically if it has been observed inside an AI CLI's subtree (`cliSubtreeSnapshot`). Commands you launch yourself are never in that set, so they're monitored and listed but never reaped. As a second guard, the job that currently owns the terminal — read from `tcgetpgrp()` on the PTY — is always off-limits. The guard matches the process-group *leader* only: children inherit their parent's group, so matching the whole group would have marked every MCP server as foreground and silently disabled the cleanup this app exists for.
+
+- **Fixed `vim` (and every other full-screen program) drawing on top of previous output** — `AltScreenFilter` stripped DEC private modes 47/1047/1049 from the PTY stream for every program in every tab, and additionally swallowed `CSI 2J` while latched. Vim starts with `ESC[?1049h` followed by `ESC[2J`, so it got neither a fresh alternate buffer nor a screen clear, and painted over whatever the shell had left behind. The filter is now scoped to the foreground job: it applies only while an AI CLI actually owns the terminal, so CLIs keep full scrollback while `vim`, `less`, `htop`, `tmux` and anything over SSH get a real alternate screen. The foreground process is resolved only when the process group changes, so the per-chunk cost is a single `tcgetpgrp()`.
+
+- **Fixed the alt-screen latch surviving a dropped session** — `inVirtualAltScreen` was only cleared by a matching exit sequence. When a program died without sending one (dropped SSH, `kill -9`, crash), the latch stayed set for the life of the tab and kept swallowing every later `CSI 2J`, so plain `clear` silently stopped working. RIS (`ESC c`) and DECSTR (`ESC[!p`) now clear it, as does enabling/disabling the filter or a CLI exiting.
+
+- **Fixed commands being mistaken for AI CLIs** — process identity was a substring match against the whole argv, so `ssh user@codex-prod` was labelled "Codex CLI", shown wrongly in the process panel, and SIGTERMed whenever a CLI was launched from the toolbar. Detection now considers only the executable name and, for runtime-launched scripts (`node …/claude-code/cli.js`), the script path.
+
+- **Fixed a recycled PID being killed in place of a dead one** — the CLI-exit sweep filtered its kill list with `isProcessAlive`, which only proves *something* holds that PID, not that it's the process we recorded. The snapshot now stores `(pid, startTime)` identities and verifies both before signalling.
+
+### New Features
+- **Automatic cleanup can be switched off** — Settings → Process Monitor → "Automatically clean up leftover processes". Previously only the timeouts were adjustable, where `0` confusingly meant "kill immediately" rather than "off". Orphans are still detected and listed when disabled; nothing is killed without a click.
+
+### Internal
+- `ProcessTreeQuery` gains `foregroundProcessGroup(ptyFd:)`, `processStartTime(pid:)`, `matchesIdentity(_:)` and `detectCLIProvider(args:)`; `describeProcess` and `isMCPServer` grew argv-taking variants so first-time process discovery reads `KERN_PROCARGS2` once instead of three times.
+- `TrackedProcess` caches its `cliProvider`, so the per-poll CLI scan never re-reads argv for an already-classified process.
+- CPU is now sampled for every descendant rather than only killable ones, so the process panel shows real activity for your own jobs.
+- `ProcessMonitor` owns a private `dup()` of the PTY primary fd, so foreground lookups can't outlive or be invalidated by the terminal view's fd.
+
 ## [v1.13.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.13.0) — Multi-CLI Parity, Themes, Command Palette, Saved Prompts, Split Panes
 
 ### Bug Fixes

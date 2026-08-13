@@ -31,7 +31,6 @@ struct TerminalViewWrapper: NSViewRepresentable {
             guard pid > 0 else { return }
             pm.shellPID = pid
             pm.isRunning = true
-            processMonitor?.startMonitoring(shellPID: pid)
 
             // Create a duplicate fd for synchronous writes.
             // SwiftTerm uses DispatchIO on childfd for reads — mixing direct write()
@@ -39,6 +38,10 @@ struct TerminalViewWrapper: NSViewRepresentable {
             // fd number so DispatchIO isn't affected, while writes still reach the PTY.
             let masterFd = tv.process.childfd
             if masterFd >= 0 { tv.writeFd = dup(masterFd) }
+
+            // The monitor takes its own dup so it can ask the PTY which job is
+            // in the foreground — the process it must never terminate.
+            processMonitor?.startMonitoring(shellPID: pid, ptyMasterFd: masterFd)
         }
 
         return terminalView
@@ -222,10 +225,14 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             feed(text: "\u{1b}[?1l")
         }
 
-        // Exit alternate screen buffer if still active (defensive — filter should prevent this)
+        // Leave the alternate buffer if the CLI exited without doing so itself.
         if terminal.isCurrentBufferAlternate {
             feed(text: "\u{1b}[?1049l")
         }
+
+        // The CLI is gone, so the filter must not stay latched to its state.
+        altScreenFilter.reset()
+        lastForegroundPgid = -1
     }
 
     @objc private func saveWorkingDirectory() {
@@ -273,6 +280,37 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         processMonitor?.updateContextUsage(current)
     }
 
+    // MARK: - Alternate Screen Scoping
+
+    /// Foreground process group seen on the last check. Used to avoid resolving
+    /// the process name on every chunk — it only changes when the job does.
+    private var lastForegroundPgid: pid_t = -1
+
+    /// Enable the scrollback filter only while an AI CLI owns the terminal.
+    ///
+    /// The filter's purpose is to keep a CLI's conversation history in the main
+    /// buffer instead of a throwaway alternate screen. Applied indiscriminately
+    /// it breaks every other full-screen program, because it swallows both the
+    /// buffer switch and the clear that follows — so the program paints on top
+    /// of the previous screen's contents. Asking the PTY who is in the
+    /// foreground keeps the feature for the case it was written for and gets it
+    /// out of the way of everything else.
+    private func updateAltScreenScope() {
+        guard AppConfiguration.shared.disableAltScreen else {
+            altScreenFilter.setEnabled(false)
+            return
+        }
+
+        let pgid = ProcessTreeQuery.foregroundProcessGroup(ptyFd: process?.childfd ?? -1)
+        guard pgid != lastForegroundPgid else { return }
+        lastForegroundPgid = pgid
+
+        // The process group leader is the job the user launched, so this reads
+        // `claude`/`gemini` for a CLI and `ssh`/`vim`/`less` for anything else.
+        let isCLI = pgid > 0 && ProcessTreeQuery.detectCLIProvider(pid: pgid) != nil
+        altScreenFilter.setEnabled(isCLI)
+    }
+
     // MARK: - Scroll Position Preservation
 
     private var suppressScrollerUpdate = false
@@ -288,6 +326,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     /// snaps yDisp to yBase on new output. We save/restore yDisp around feed.
     /// Also prevents feedPrepare() from clearing active text selection.
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        updateAltScreenScope()
         let filtered = altScreenFilter.filter(slice)
         guard !filtered.isEmpty else { return }
 
@@ -329,7 +368,10 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         changeScrollback(5000)
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
-        altScreenFilter.isEnabled = config.disableAltScreen
+        // Force the next scope check to re-resolve, so toggling the setting
+        // takes effect without waiting for the foreground job to change.
+        lastForegroundPgid = -1
+        updateAltScreenScope()
 
         // Install themed ANSI palette so CLI tools' colored UI blocks blend in.
         installColors(theme.ansiPalette)

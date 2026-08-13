@@ -11,6 +11,9 @@ struct TrackedProcess: Identifiable {
     // Populated once on first discovery
     var processDescription: String = ""
     var isMCPServer: Bool = false
+    /// Which AI CLI this process is, if any. Cached so the per-poll CLI scan
+    /// never re-reads argv for a process it has already classified.
+    var cliProvider: CLIProvider?
     var isPinned: Bool = false
     var lastActiveTime: Date?
 

@@ -17,6 +17,9 @@ final class AppConfiguration: ObservableObject {
     @Published var preferredCLI: String = ""
     @Published var preferredDangerousMode: Bool = false
     @Published var mcpIdleKillSeconds: Int = 90
+    /// Master switch for automatic process termination. When off, orphans are
+    /// still detected and listed, but nothing is killed without a click.
+    @Published var autoKillEnabled: Bool = true
     @Published var disableAltScreen: Bool = true
     @Published var pinnedProcessDescriptions: [String] = []
     @Published var savedPrompts: [SavedPrompt] = []
@@ -50,6 +53,7 @@ final class AppConfiguration: ObservableObject {
             if let v = json["preferredCLI"] as? String { preferredCLI = v }
             if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
             if let v = json["mcpIdleKillSeconds"] as? Int { mcpIdleKillSeconds = v }
+            if let v = json["autoKillEnabled"] as? Bool { autoKillEnabled = v }
             if let v = json["disableAltScreen"] as? Bool { disableAltScreen = v }
 
             if let v = json["pinnedProcessDescriptions"] as? [String] { pinnedProcessDescriptions = v }
@@ -81,6 +85,7 @@ final class AppConfiguration: ObservableObject {
             "preferredCLI": preferredCLI,
             "preferredDangerousMode": preferredDangerousMode,
             "mcpIdleKillSeconds": mcpIdleKillSeconds,
+            "autoKillEnabled": autoKillEnabled,
             "disableAltScreen": disableAltScreen,
             "pinnedProcessDescriptions": pinnedProcessDescriptions,
             "savedPrompts": savedPrompts.map { ["id": $0.id.uuidString, "name": $0.name, "body": $0.body] },
