@@ -8,6 +8,11 @@ import Foundation
 /// - CSI 2J (erase entire display) — only while in virtual alt-screen, to prevent the TUI
 ///   from wiping conversation history on the main buffer
 ///
+/// Swallowing the switch also swallows the blank screen it guaranteed, so the
+/// enter is reported to the host as `.clearViewport` rather than simply
+/// dropped. Without it the CLI paints straight over whatever the shell had on
+/// screen and the two interleave, cell by cell.
+///
 /// When combined parameters are present (e.g., `ESC[?1049;25h`), only the alt-screen
 /// parameters are removed; remaining parameters are preserved.
 ///
@@ -20,6 +25,17 @@ import Foundation
 ///   owner is responsible for enabling this only while such a CLI is the
 ///   terminal's foreground job; see `ClaudyTerminalView.updateAltScreenScope`.
 final class AltScreenFilter {
+
+    /// A piece of filtered stream: bytes to feed the emulator, or an action the
+    /// host has to perform against the live terminal at this exact point in it.
+    enum Output {
+        case data(ArraySlice<UInt8>)
+
+        /// An alternate-screen enter was swallowed here. The host owes the CLI
+        /// the empty screen the real switch would have given it, without
+        /// discarding what is currently displayed.
+        case clearViewport
+    }
 
     private(set) var isEnabled: Bool = true
 
@@ -49,7 +65,21 @@ final class AltScreenFilter {
     /// verbatim on the next chunk, which is the correct handoff.
     func reset() {
         inVirtualAltScreen = false
+        entryEraseArmed = false
     }
+
+    /// Whether the next `CSI 2J` is the CLI's fresh-canvas clear, paired with an
+    /// alt-screen enter we just swallowed, and so may be passed through.
+    ///
+    /// Every later one is stripped, because by then the screen holds the
+    /// conversation itself. A CLI redraws its live frame after a resize but not
+    /// the transcript above it, so honouring that erase would blank output no
+    /// one is going to paint again.
+    ///
+    /// Disarmed by the first printable byte: a clear that arrives before the
+    /// CLI has drawn anything is the entry clear, one that arrives after it is
+    /// not.
+    private var entryEraseArmed: Bool = false
 
     /// Bytes held from the previous chunk that may be the start of an escape sequence.
     private var residual: [UInt8] = []
@@ -62,15 +92,16 @@ final class AltScreenFilter {
 
     // MARK: - Public API
 
-    /// Filter a data chunk, returning bytes with filtered sequences removed.
-    func filter(_ slice: ArraySlice<UInt8>) -> ArraySlice<UInt8> {
+    /// Filter a data chunk into segments: bytes to feed, and any host actions
+    /// that have to happen between them.
+    func filter(_ slice: ArraySlice<UInt8>) -> [Output] {
         guard isEnabled else {
             if !residual.isEmpty {
                 let flushed = residual + Array(slice)
                 residual.removeAll()
-                return flushed[...]
+                return [.data(flushed[...])]
             }
-            return slice
+            return slice.isEmpty ? [] : [.data(slice)]
         }
 
         var buf: [UInt8]
@@ -81,11 +112,20 @@ final class AltScreenFilter {
             residual.removeAll()
         }
 
-        guard !buf.isEmpty else { return [][...] }
+        guard !buf.isEmpty else { return [] }
 
+        var segments = [Output]()
         var output = [UInt8]()
         output.reserveCapacity(buf.count)
         var i = 0
+
+        // Hand off everything accumulated so far, so that an action lands
+        // between the bytes that precede it and the ones that follow.
+        func flush() {
+            guard !output.isEmpty else { return }
+            segments.append(.data(output[...]))
+            output = []
+        }
 
         while i < buf.count {
             if buf[i] == 0x1B { // ESC
@@ -93,6 +133,7 @@ final class AltScreenFilter {
                 // state we were tracking is void; forward it untouched.
                 if i + 1 < buf.count && buf[i + 1] == 0x63 {
                     inVirtualAltScreen = false
+                    entryEraseArmed = false
                     output.append(buf[i])
                     output.append(buf[i + 1])
                     i += 2
@@ -107,7 +148,8 @@ final class AltScreenFilter {
 
                 case .incomplete:
                     residual = Array(buf[i...])
-                    return output[...]
+                    flush()
+                    return segments
 
                 case .keep(let length):
                     output.append(contentsOf: buf[i..<(i + length)])
@@ -119,14 +161,24 @@ final class AltScreenFilter {
                 case .rewrite(let replacement, let length):
                     output.append(contentsOf: replacement)
                     i += length
+
+                case .clearViewport(let replacement, let length):
+                    output.append(contentsOf: replacement)
+                    flush()
+                    segments.append(.clearViewport)
+                    i += length
                 }
             } else {
+                // The CLI is painting, so any clear from here on is a redraw of
+                // its own output rather than the one that pairs with the switch.
+                if buf[i] >= 0x20 { entryEraseArmed = false }
                 output.append(buf[i])
                 i += 1
             }
         }
 
-        return output[...]
+        flush()
+        return segments
     }
 
     // MARK: - CSI Parsing
@@ -137,6 +189,10 @@ final class AltScreenFilter {
         case keep(Int)
         case strip(Int)
         case rewrite([UInt8], Int)
+
+        /// Drop the sequence, emit `[UInt8]` in its place (empty when nothing
+        /// survives the edit), and tell the host to blank the viewport.
+        case clearViewport([UInt8], Int)
     }
 
     /// Attempt to parse a CSI sequence starting at `buf[from]` (which is ESC).
@@ -214,19 +270,29 @@ final class AltScreenFilter {
         // Update virtual alt-screen state
         let entering = (finalByte == 0x68) // 'h' = set mode (enter), 'l' = reset (exit)
 
+        // Entering owes the CLI a blank screen. Re-entering does not: it is
+        // already painting on one, and scrolling again would push a copy of its
+        // own frame into the history.
+        let owesBlankScreen = entering && !inVirtualAltScreen
+        if owesBlankScreen { entryEraseArmed = true }
+        if !entering { entryEraseArmed = false }
+        inVirtualAltScreen = entering
+
+        // Mixed parameters keep the ones that are not ours (`ESC[?1049;25h`
+        // still has to show the cursor); an all-alt-screen sequence leaves
+        // nothing behind.
+        let replacement: [UInt8]
         if otherParams.isEmpty {
-            // All params are alt-screen — strip the entire sequence
-            inVirtualAltScreen = entering
-            return .strip(seqLength)
+            replacement = []
+        } else {
+            let newParamString = otherParams.map(String.init).joined(separator: ";")
+            replacement = [0x1B, 0x5B, 0x3F] + Array(newParamString.utf8) + [finalByte]
         }
 
-        // Mixed: rewrite with only the non-alt-screen params
-        inVirtualAltScreen = entering
-        let newParamString = otherParams.map(String.init).joined(separator: ";")
-        let rewritten: [UInt8] = [0x1B, 0x5B, 0x3F] +
-            Array(newParamString.utf8) +
-            [finalByte]
-        return .rewrite(rewritten, seqLength)
+        if owesBlankScreen {
+            return .clearViewport(replacement, seqLength)
+        }
+        return replacement.isEmpty ? .strip(seqLength) : .rewrite(replacement, seqLength)
     }
 
     // MARK: - Standard CSI Parsing (Erase in Display)
@@ -276,6 +342,12 @@ final class AltScreenFilter {
         case 3:
             // CSI 3J — Erase scrollback buffer. Always strip to protect history.
             return .strip(seqLength)
+        case 2 where inVirtualAltScreen && entryEraseArmed:
+            // The clear that pairs with the switch we just swallowed. The
+            // viewport was scrolled into scrollback for it, so erasing now
+            // costs nothing and clears any row the scroll left behind.
+            entryEraseArmed = false
+            return .keep(seqLength)
         case 2 where inVirtualAltScreen:
             // CSI 2J — Erase entire display. Strip while TUI is managing main buffer,
             // so it can't wipe out conversation history visible on the main screen.
