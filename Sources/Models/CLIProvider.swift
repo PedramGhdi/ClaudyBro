@@ -140,11 +140,14 @@ enum CLIProvider: String, CaseIterable, Codable, Identifiable {
 
     // MARK: - Capabilities (used by ProcessMonitor & status bridge)
 
-    /// True if this CLI auto-respawns its MCP child processes on next tool call.
-    /// When true, ProcessMonitor may safely reap idle MCP servers under the CLI's
-    /// subtree. When false, the entire subtree is protected because killing a
-    /// child crashes the CLI (no auto-restart).
-    var autoRestartsKilledMCPs: Bool {
+    /// True if this CLI survives losing an idle helper process it spawned —
+    /// a one-shot `npm`/`node` invocation, a shell pipeline, a leftover worker.
+    /// When false, ProcessMonitor protects the CLI's entire subtree while it
+    /// runs, because killing any child takes the session down with it.
+    ///
+    /// MCP servers are exempt either way: no CLI silently respawns one, so
+    /// reaping a live server costs the session its tools. See `ProcessMonitor`.
+    var allowsHelperReaping: Bool {
         switch self {
         case .claude: return true
         case .gemini, .codex, .kilo: return false

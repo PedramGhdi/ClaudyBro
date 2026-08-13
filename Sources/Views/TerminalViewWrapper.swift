@@ -152,6 +152,7 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     private var linkDelegate: LinkSanitizingDelegate?
     private let altScreenFilter = AltScreenFilter()
     private var contextScanScheduled = false
+    private var appearanceWorkItem: DispatchWorkItem?
     /// Duplicate fd for synchronous writes — avoids conflicting with DispatchIO on the original fd.
     var writeFd: Int32 = -1
 
@@ -506,15 +507,26 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         scheduleContextScan()
     }
 
+    /// Re-apply every setting this view owns. Runs at startup and on each
+    /// `configurationChanged` post — including ones that have nothing to do
+    /// with appearance, such as pinning a process — so each step here has to be
+    /// a no-op when its value did not actually change.
+    ///
+    /// Assigning `font` is the expensive one. SwiftTerm rebuilds its glyph
+    /// metrics, re-derives the grid from the new cell size and then soft-resets
+    /// the terminal: palette cleared, scroll region reset, prompt marks
+    /// dropped, cursor modes back to defaults. Doing that underneath a running
+    /// CLI makes it repaint over its own output, which is what an unconditional
+    /// assignment caused on every unrelated settings change.
     func configureAppearance() {
         let config = AppConfiguration.shared
         let theme = config.currentTheme
         // Custom font name falls back to monospaced system font if invalid.
-        if let custom = NSFont(name: config.fontName, size: config.fontSize) {
-            font = custom
-        } else {
-            font = NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
-        }
+        let desiredFont = FontCatalog.font(named: config.fontName, size: config.fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
+        let fontChanged = desiredFont != font
+        if fontChanged { font = desiredFont }
+
         nativeForegroundColor = theme.foreground
         // SwiftTerm carries the alpha through to the layer that paints the
         // background and margins, so translucency needs nothing more than a
@@ -533,7 +545,11 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         getTerminal().options.cursorStyle = style
         cursorStyleChanged(source: getTerminal(), newStyle: style)
 
-        changeScrollback(5000)
+        // Reallocating the history is not free and drops nothing back into
+        // place, so it only runs when the buffer is not already this size.
+        if getTerminal().options.scrollback != Self.scrollbackLines {
+            changeScrollback(Self.scrollbackLines)
+        }
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
         // Force the next scope check to re-resolve, so toggling the setting
@@ -542,14 +558,35 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         updateAltScreenScope()
 
         // Install themed ANSI palette so CLI tools' colored UI blocks blend in.
+        // Must stay after the font: SwiftTerm's soft reset resets all colours.
         installColors(theme.ansiPalette)
+
+        if fontChanged {
+            // The grid just changed shape under whatever is running. Anchor the
+            // viewport on the live rows: `dataReceived` restores the scroll
+            // offset it saw before each write, and a row index from the old
+            // geometry would pin the view while the program repaints below it.
+            scroll(toPosition: 1.0)
+            needsDisplay = true
+        }
     }
 
+    /// Scrollback depth, in lines. Claude Code manages its own display, but the
+    /// user still scrolls back through a session's history.
+    private static let scrollbackLines = 5000
+
     @objc private func handleConfigurationChanged() {
-        DispatchQueue.main.async { [weak self] in
+        // ⌘+ / ⌘− post one of these per keypress, and applying a font resizes
+        // the grid and soft-resets the terminal under the running program. A
+        // held-down shortcut collapses into a single apply; the delay is below
+        // what a single press can perceive.
+        appearanceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
             self?.configureAppearance()
             self?.needsDisplay = true
         }
+        appearanceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
     }
 
     // MARK: - Focus management

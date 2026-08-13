@@ -2,6 +2,18 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.15.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.0) — Live MCP Servers Are Off-Limits, Font Handling Fixed
+
+### Fixed
+- **Live MCP servers are no longer killed for being idle.** The idle reaper treated a server sitting at zero CPU as garbage, which is exactly what an MCP server does between tool calls — with the default timeout, every server was SIGTERMed roughly 90 seconds after its last use, mid-session. The premise was that Claude Code respawns them on demand; it does not. It drops the dead server's tools from the running session and tells the model they are gone (`"The following MCP servers have disconnected. Their instructions above no longer apply"`), so a long task silently lost a capability until someone ran `/mcp reconnect`. A server attached to the running CLI is now left alone and cleaned up when that CLI exits, along with the rest of its subtree. One left behind by an earlier run is not attached, and is still reaped.
+- **Changing the font no longer garbles the terminal.** Appearance was re-applied on *every* configuration change — including ones with nothing to do with appearance, like pinning a process — and re-assigning the font makes SwiftTerm rebuild its metrics, resize the grid and soft-reset the terminal: palette cleared, scroll region reset, prompt marks dropped, cursor modes back to defaults, all underneath a running CLI that has no idea. With ⌘+ / ⌘− posting one of those per keypress, a running Claude repainted over its own output. The font, and the scrollback buffer, are now touched only when the value actually changed, rapid changes are coalesced, and a real font change anchors the viewport at the live rows so the scroll-preserving read path can't pin it to a row from the old geometry.
+- **A configured font that isn't installed is now visible as such** instead of silently falling back to the system monospaced face.
+
+### Changed
+- **Font family is a picker** listing the monospaced families installed on the Mac, rather than a text field that accepted anything. "SF Mono" is offered explicitly — macOS keeps its system fonts out of the font panel, and `NSFont(name:)` cannot resolve it.
+- **Copy on select defaults to on** for new installs, matching every other terminal. Existing configs keep whatever they saved.
+- **`mcpIdleKillSeconds` is now `idleHelperKillSeconds`** — the timeout only ever applies to one-shot helpers now (`npm`, `node`, shell pipelines), so the name says that. The old key is still read, so existing configs keep their value.
+
 ## [v1.14.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.14.0) — Terminal Parity: Find, Themes, Transparency, Shell Integration, Session Restore
 
 ### Dependencies

@@ -18,7 +18,9 @@ final class AppConfiguration: ObservableObject {
     /// Frost whatever shows through a translucent background, rather than
     /// letting the raw desktop through.
     @Published var backgroundBlur: Bool = true
-    @Published var copyOnSelect: Bool = false
+    /// Selecting text copies it, the way every other terminal on this machine
+    /// behaves. Existing configs keep whatever they already saved.
+    @Published var copyOnSelect: Bool = true
     /// Shell to spawn, or "auto" for `$SHELL`.
     @Published var shellPath: String = "auto"
     /// Rebuild the previous tab and split layout on launch.
@@ -34,7 +36,9 @@ final class AppConfiguration: ObservableObject {
     @Published var autoKillTimeoutSeconds: Int = 90
     @Published var preferredCLI: String = ""
     @Published var preferredDangerousMode: Bool = false
-    @Published var mcpIdleKillSeconds: Int = 90
+    /// Idle seconds before a CLI-spawned helper is reaped. Live MCP servers are
+    /// exempt — they only go when their CLI does.
+    @Published var idleHelperKillSeconds: Int = 90
     /// Master switch for automatic process termination. When off, orphans are
     /// still detected and listed, but nothing is killed without a click.
     @Published var autoKillEnabled: Bool = true
@@ -116,7 +120,13 @@ final class AppConfiguration: ObservableObject {
             if let v = json["autoKillTimeoutSeconds"] as? Int { autoKillTimeoutSeconds = v }
             if let v = json["preferredCLI"] as? String { preferredCLI = v }
             if let v = json["preferredDangerousMode"] as? Bool { preferredDangerousMode = v }
-            if let v = json["mcpIdleKillSeconds"] as? Int { mcpIdleKillSeconds = v }
+            // `mcpIdleKillSeconds` is the pre-1.15 name for the same timeout,
+            // read so an existing config keeps its value.
+            if let v = json["idleHelperKillSeconds"] as? Int {
+                idleHelperKillSeconds = v
+            } else if let v = json["mcpIdleKillSeconds"] as? Int {
+                idleHelperKillSeconds = v
+            }
             if let v = json["autoKillEnabled"] as? Bool { autoKillEnabled = v }
             if let v = json["disableAltScreen"] as? Bool { disableAltScreen = v }
 
@@ -155,7 +165,7 @@ final class AppConfiguration: ObservableObject {
             "autoKillTimeoutSeconds": autoKillTimeoutSeconds,
             "preferredCLI": preferredCLI,
             "preferredDangerousMode": preferredDangerousMode,
-            "mcpIdleKillSeconds": mcpIdleKillSeconds,
+            "idleHelperKillSeconds": idleHelperKillSeconds,
             "autoKillEnabled": autoKillEnabled,
             "disableAltScreen": disableAltScreen,
             "pinnedProcessDescriptions": pinnedProcessDescriptions,
