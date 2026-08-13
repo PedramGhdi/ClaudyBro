@@ -8,6 +8,21 @@ enum ProcessTreeQuery {
         let parentPid: pid_t
         let name: String
         let startTime: Date
+
+        var identity: ProcessIdentity {
+            ProcessIdentity(pid: pid, startTime: startTime)
+        }
+    }
+
+    /// A pid paired with its start time.
+    ///
+    /// A bare pid is not a stable handle: once a process exits the OS is free
+    /// to hand its number to something unrelated, and a kill list built from
+    /// stale pids would then target an innocent process. Start time (second
+    /// resolution, straight from the kernel) makes the reference unambiguous.
+    struct ProcessIdentity: Hashable {
+        let pid: pid_t
+        let startTime: Date
     }
 
     /// Query the full process table via sysctl(KERN_PROC_ALL).
@@ -76,6 +91,40 @@ enum ProcessTreeQuery {
         kill(pid, 0) == 0
     }
 
+    /// Start time of a live process, or nil if the pid is gone.
+    ///
+    /// Paired with `isProcessAlive`-style checks this answers the question that
+    /// actually matters before signalling: "is *the same* process still there?"
+    static func processStartTime(pid: pid_t) -> Date? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var proc = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+
+        guard sysctl(&mib, UInt32(mib.count), &proc, &size, nil, 0) == 0,
+              size > 0, proc.kp_proc.p_pid == pid
+        else { return nil }
+
+        return Date(timeIntervalSince1970: TimeInterval(proc.kp_proc.p_starttime.tv_sec))
+    }
+
+    /// Confirm a process is both alive and still the one we recorded.
+    static func matchesIdentity(_ identity: ProcessIdentity) -> Bool {
+        processStartTime(pid: identity.pid) == identity.startTime
+    }
+
+    // MARK: - Terminal Foreground Group
+
+    /// Foreground process group of a PTY, or 0 when unavailable.
+    ///
+    /// `tcgetpgrp` on the primary side reports which job currently owns the
+    /// terminal — i.e. exactly what the user is typing into. Returns 0 rather
+    /// than -1 so callers can treat "unknown" as "matches nothing".
+    static func foregroundProcessGroup(ptyFd: Int32) -> pid_t {
+        guard ptyFd >= 0 else { return 0 }
+        let pgid = tcgetpgrp(ptyFd)
+        return pgid > 0 ? pgid : 0
+    }
+
     // MARK: - Command Line & Description
 
     /// Get the full command line arguments for a process via KERN_PROCARGS2.
@@ -121,7 +170,10 @@ enum ProcessTreeQuery {
 
     /// Human-readable description of a process based on its command line.
     static func describeProcess(pid: pid_t) -> String {
-        let args = getProcessArgs(pid: pid)
+        describeProcess(args: getProcessArgs(pid: pid))
+    }
+
+    static func describeProcess(args: [String]) -> String {
         let joined = args.joined(separator: " ").lowercased()
 
         // Is this an npm/npx/yarn wrapper launching something else? The wrapper
@@ -168,9 +220,7 @@ enum ProcessTreeQuery {
         if joined.contains("prettier") { return "Prettier Process" }
 
         // AI CLI tools
-        for provider in CLIProvider.allCases {
-            if joined.contains(provider.processKeyword) { return provider.processDescription }
-        }
+        if let provider = detectCLIProvider(args: args) { return provider.processDescription }
 
         // npm
         if joined.contains("npm") { return "npm Process" }
@@ -183,10 +233,50 @@ enum ProcessTreeQuery {
         return "Unknown Process"
     }
 
+    /// Identify which AI CLI a process is, or nil if it isn't one.
+    ///
+    /// Only the executable name — and, for runtime-launched scripts such as
+    /// `node …/@anthropic-ai/claude-code/cli.js`, the script path — are
+    /// considered. Matching the whole argv used to misidentify unrelated
+    /// commands: `ssh user@codex-prod` was labelled "Codex CLI", which both
+    /// mislabeled it in the process panel and got it SIGTERMed whenever the
+    /// user launched a real CLI from the toolbar.
+    static func detectCLIProvider(pid: pid_t) -> CLIProvider? {
+        detectCLIProvider(args: getProcessArgs(pid: pid))
+    }
+
+    static func detectCLIProvider(args: [String]) -> CLIProvider? {
+        guard let executable = args.first, !executable.isEmpty else { return nil }
+
+        let exeName = URL(fileURLWithPath: executable).lastPathComponent.lowercased()
+        var candidates = [exeName]
+
+        // A runtime tells us nothing on its own — the identity lives in the
+        // script it was handed. Only path-shaped arguments are considered, so
+        // a bare hostname or flag can never be mistaken for a CLI.
+        if scriptRuntimes.contains(exeName),
+           let script = args.dropFirst().first(where: { $0.contains("/") })
+        {
+            candidates.append(script.lowercased())
+        }
+
+        return CLIProvider.allCases.first { provider in
+            candidates.contains { $0.contains(provider.processKeyword) }
+        }
+    }
+
+    /// Interpreters that launch a CLI indirectly, where argv[0] is the runtime.
+    private static let scriptRuntimes: Set<String> = [
+        "node", "bun", "deno", "npx", "python", "python3",
+    ]
+
     /// Check if a process is an MCP server (legitimately idle, should not be flagged as orphan).
     /// Must stay aligned with describeProcess() — any process labeled as MCP must be detected here.
     static func isMCPServer(pid: pid_t) -> Bool {
-        let args = getProcessArgs(pid: pid)
+        isMCPServer(args: getProcessArgs(pid: pid))
+    }
+
+    static func isMCPServer(args: [String]) -> Bool {
         let joined = args.joined(separator: " ").lowercased()
         return joined.contains("mcp")
             || joined.contains("language-server")

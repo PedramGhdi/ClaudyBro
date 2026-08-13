@@ -12,13 +12,44 @@ import Foundation
 /// parameters are removed; remaining parameters are preserved.
 ///
 /// Handles sequences that may be split across consecutive data chunks via a small residual buffer.
+///
+/// - Important: This is only ever appropriate for an AI CLI's own output. Any
+///   other full-screen program — `vim`, `less`, `man`, `htop`, `tmux`, and
+///   anything reached over `ssh` — genuinely needs the alternate buffer, and
+///   filtering it makes them paint over whatever was already on screen. The
+///   owner is responsible for enabling this only while such a CLI is the
+///   terminal's foreground job; see `ClaudyTerminalView.updateAltScreenScope`.
 final class AltScreenFilter {
 
-    var isEnabled: Bool = true
+    private(set) var isEnabled: Bool = true
 
     /// Whether we've blocked an alt-screen enter, meaning the TUI thinks it's in
     /// the alternate buffer but is actually writing to the main buffer.
     private(set) var inVirtualAltScreen: Bool = false
+
+    /// Turn filtering on or off, clearing the virtual alt-screen latch.
+    ///
+    /// The latch records that we swallowed an alt-screen *enter*, and it is
+    /// normally cleared by the matching exit. When a program dies without
+    /// sending one — a dropped SSH session, `kill -9`, a crash — the latch
+    /// would otherwise stay set for the life of the tab and keep swallowing
+    /// every subsequent `CSI 2J`, which is how plain `clear` stops working.
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        isEnabled = enabled
+        reset()
+    }
+
+    /// Clear the virtual alt-screen latch. Called on enable/disable and when a
+    /// CLI exits.
+    ///
+    /// Deliberately leaves `residual` alone: those bytes are the front of an
+    /// escape sequence split across chunks, and dropping them would emit the
+    /// tail as literal garbage. The disabled path in `filter` flushes them
+    /// verbatim on the next chunk, which is the correct handoff.
+    func reset() {
+        inVirtualAltScreen = false
+    }
 
     /// Bytes held from the previous chunk that may be the start of an escape sequence.
     private var residual: [UInt8] = []
@@ -58,6 +89,16 @@ final class AltScreenFilter {
 
         while i < buf.count {
             if buf[i] == 0x1B { // ESC
+                // RIS (ESC c) — a full terminal reset. Whatever alt-screen
+                // state we were tracking is void; forward it untouched.
+                if i + 1 < buf.count && buf[i + 1] == 0x63 {
+                    inVirtualAltScreen = false
+                    output.append(buf[i])
+                    output.append(buf[i + 1])
+                    i += 2
+                    continue
+                }
+
                 let result = tryParseCSI(buf, from: i)
                 switch result {
                 case .notCSI:
@@ -208,8 +249,14 @@ final class AltScreenFilter {
                 return classifyStandardCSI(buf, paramStart: start + 2, paramEnd: pos, finalByte: finalByte, seqLength: seqLength)
             }
             if b >= 0x20 && b <= 0x2F {
-                // Intermediate byte — not our target
-                return .keep(findSequenceEnd(buf, from: pos) - start)
+                // Intermediate byte — not a sequence we rewrite, but DECSTR
+                // (ESC [ ! p) is a soft reset and must clear the latch for the
+                // same reason RIS does.
+                let end = findSequenceEnd(buf, from: pos)
+                if b == 0x21, end <= buf.count, buf[end - 1] == 0x70 { // '!' … 'p'
+                    inVirtualAltScreen = false
+                }
+                return .keep(end - start)
             }
             return .notCSI
         }
