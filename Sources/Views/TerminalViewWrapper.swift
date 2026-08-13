@@ -87,20 +87,23 @@ private final class LinkSanitizingDelegate: TerminalViewDelegate {
     }
 
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // Relative paths are anchored to the shell's directory, which OSC 7
+        // keeps current; an empty string just means no relative resolution.
+        let cwd = (original as? ClaudyTerminalView)?.processMonitor?.currentDirectory ?? ""
 
-        // If link already has a scheme (e.g. https://..., mailto:...), use as-is
-        if trimmed.contains("://") || trimmed.hasPrefix("mailto:") || trimmed.hasPrefix("tel:") {
-            if let url = URL(string: trimmed) {
+        switch TerminalLinkResolver.resolve(link, workingDirectory: cwd) {
+        case .file(let url, let isDirectory):
+            // Reveal rather than open: terminal output is untrusted, and a click
+            // should never hand an archive to Archive Utility or launch a bundle.
+            if isDirectory {
                 NSWorkspace.shared.open(url)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
             }
-            return
-        }
-
-        // Bare hostname like "github.com/user/repo" → prepend https://
-        if let url = URL(string: "https://" + trimmed) {
+        case .web(let url):
             NSWorkspace.shared.open(url)
+        case .unresolved:
+            NSSound.beep()
         }
     }
 
