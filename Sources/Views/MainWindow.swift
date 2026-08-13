@@ -335,6 +335,14 @@ struct SettingsSheet: View {
     @ObservedObject private var config = AppConfiguration.shared
     @Environment(\.dismiss) private var dismiss
 
+    /// The installed monospaced families, plus the configured one when it is
+    /// not among them — a hand-edited config or an uninstalled font would
+    /// otherwise leave the picker showing nothing at all.
+    private var fontFamilies: [String] {
+        let families = FontCatalog.monospacedFamilies
+        return families.contains(config.fontName) ? families : [config.fontName] + families
+    }
+
     var body: some View {
         Form {
             Section("Appearance") {
@@ -344,14 +352,18 @@ struct SettingsSheet: View {
                     }
                 }
                 Stepper("Font Size: \(Int(config.fontSize))", value: $config.fontSize, in: 8...32, step: 1)
-                HStack {
-                    Text("Font Family")
-                    Spacer()
-                    TextField("SF Mono", text: $config.fontName)
-                        .frame(width: 200)
-                        .textFieldStyle(.roundedBorder)
+                Picker("Font Family", selection: $config.fontName) {
+                    ForEach(fontFamilies, id: \.self) { family in
+                        // A configured font that is not installed still renders
+                        // as the system monospaced face, so say so rather than
+                        // letting the picker claim a font that isn't in use.
+                        Text(FontCatalog.font(named: family, size: 12) == nil
+                            ? "\(family) — not installed"
+                            : family)
+                            .tag(family)
+                    }
                 }
-                Text("Any installed monospaced font (e.g., \"Menlo\", \"JetBrains Mono\"). Falls back to system mono if invalid.")
+                Text("Monospaced fonts installed on this Mac.")
                     .font(.caption).foregroundColor(.secondary)
             }
             Section("CLI Paths") {
@@ -458,9 +470,9 @@ struct SettingsSheet: View {
                              value: $config.orphanTimeoutSeconds, range: 5...300, step: 5)
                 StepperField(label: "Monitor interval:",
                              value: $config.processMonitorInterval, range: 1...30, step: 1)
-                StepperField(label: "Kill idle MCP servers after:",
-                             value: $config.mcpIdleKillSeconds, range: 0...600, step: 30)
-                Text("Applies to MCPs under CLIs that auto-restart them (e.g. Claude). For other CLIs the whole subtree is protected. 0s = kill as soon as idle.")
+                StepperField(label: "Kill idle CLI helpers after:",
+                             value: $config.idleHelperKillSeconds, range: 0...600, step: 30)
+                Text("One-shot helpers a CLI leaves running — npm, node, shell pipelines. MCP servers are never killed while their CLI is running: no CLI respawns one, so the session would lose those tools until you run /mcp reconnect. They go when the CLI exits. 0s = kill as soon as idle.")
                     .font(.caption).foregroundColor(.secondary)
             }
         }

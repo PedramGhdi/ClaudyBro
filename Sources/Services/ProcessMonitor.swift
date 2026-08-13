@@ -2,10 +2,12 @@ import Combine
 import Foundation
 
 /// Monitors the child process tree of the shell process.
-/// Detects truly orphaned node processes while excluding legitimate MCP servers.
-/// For CLIs that auto-restart MCPs (see CLIProvider.autoRestartsKilledMCPs),
-/// idle MCP servers are reaped after a configurable timeout. For CLIs that
-/// don't, the entire CLI subtree is protected.
+///
+/// Only processes an AI CLI started are ever terminated, and among those a live
+/// MCP server is left alone until its CLI exits — see the reaping rules in
+/// `poll()`. For CLIs that cannot survive losing a helper mid-session (see
+/// `CLIProvider.allowsHelperReaping`), the entire subtree is protected while
+/// they run.
 final class ProcessMonitor: ObservableObject {
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
@@ -20,7 +22,9 @@ final class ProcessMonitor: ObservableObject {
     var monitorInterval: TimeInterval = 5
     var orphanTimeout: TimeInterval = 30
     var autoKillTimeout: TimeInterval = 90
-    var mcpIdleTimeout: TimeInterval = 90
+    /// How long a CLI-spawned helper may sit idle before it is reaped. Live MCP
+    /// servers are exempt; see the reaping rules in `poll()`.
+    var idleHelperTimeout: TimeInterval = 90
     /// Master switch for every automatic kill path. Orphans are still detected
     /// and displayed when off — the user just does the reaping by hand.
     var autoKillEnabled: Bool = true
@@ -195,7 +199,7 @@ final class ProcessMonitor: ObservableObject {
         monitorInterval = TimeInterval(config.processMonitorInterval)
         orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
         autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
-        mcpIdleTimeout = TimeInterval(config.mcpIdleKillSeconds)
+        idleHelperTimeout = TimeInterval(config.idleHelperKillSeconds)
         autoKillEnabled = config.autoKillEnabled
 
         // Sync pin states from config (cross-tab consistency)
@@ -243,7 +247,7 @@ final class ProcessMonitor: ObservableObject {
         var updated: [TrackedProcess] = []
         updated.reserveCapacity(descendants.count)
         var orphans: [TrackedProcess] = []
-        var mcpKilled: [pid_t] = []
+        var idleKilled: [pid_t] = []
 
         // Find the active CLI and build a set of PIDs in its subtree. Only
         // these — plus anything previously recorded in cliSubtreeSnapshot — are
@@ -334,7 +338,7 @@ final class ProcessMonitor: ObservableObject {
             // group, so testing group membership would mark every MCP server
             // as foreground while the CLI is running and disable their cleanup
             // entirely. The leader is the job the user actually launched.
-            let protectsSubtree = !(detectedCLI?.autoRestartsKilledMCPs ?? true)
+            let protectsSubtree = !(detectedCLI?.allowsHelperReaping ?? true)
             let isCLISpawned = cliOwnedPids.contains(entry.pid)
                 || cliSubtreeSnapshot.contains(entry.identity)
             let ownsTerminal = foregroundPgid != 0 && entry.pid == foregroundPgid
@@ -344,18 +348,29 @@ final class ProcessMonitor: ObservableObject {
                 && !ownsTerminal
                 && !(protectsSubtree && cliOwnedPids.contains(entry.pid))
 
+            // An MCP server still attached to the running CLI is never reaped on
+            // idleness. Sitting at zero CPU is exactly what an MCP server does
+            // between tool calls, and killing one does not get it back: the CLI
+            // drops that server's tools from the live session and tells the
+            // model they are gone, so the next task quietly loses a capability
+            // until someone runs `/mcp reconnect`. They are cleaned up when the
+            // CLI exits, along with the rest of its subtree. One left behind by
+            // an earlier CLI run is no longer attached, and is still reaped.
+            let isLiveMCPServer = tracked.isMCPServer && cliOwnedPids.contains(entry.pid)
+
             if isReapable {
                 // Dynamic kill: a CLI-spawned helper idle past the timeout gets
                 // SIGTERM. `previousCPUTime > 0` in `isIdleNow` enforces at
                 // least one poll of grace for freshly-spawned processes.
-                if autoKillEnabled,
+                if !isLiveMCPServer,
+                   autoKillEnabled,
                    !tracked.isPinned,
                    isIdleNow,
                    let lastActive = tracked.lastActiveTime,
-                   Date().timeIntervalSince(lastActive) >= mcpIdleTimeout
+                   Date().timeIntervalSince(lastActive) >= idleHelperTimeout
                 {
                     kill(entry.pid, SIGTERM)
-                    mcpKilled.append(entry.pid)
+                    idleKilled.append(entry.pid)
                     continue // don't add to updated
                 }
 
@@ -407,10 +422,10 @@ final class ProcessMonitor: ObservableObject {
             updated.append(tracked)
         }
 
-        // Force-kill MCP servers that didn't respond to SIGTERM
-        if !mcpKilled.isEmpty {
+        // Force-kill helpers that didn't respond to SIGTERM
+        if !idleKilled.isEmpty {
             DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                for pid in mcpKilled {
+                for pid in idleKilled {
                     if ProcessTreeQuery.isProcessAlive(pid) { kill(pid, SIGKILL) }
                 }
             }

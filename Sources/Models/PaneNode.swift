@@ -19,7 +19,7 @@ final class TerminalPane: Identifiable, ObservableObject {
         monitor.monitorInterval = TimeInterval(config.processMonitorInterval)
         monitor.orphanTimeout = TimeInterval(config.orphanTimeoutSeconds)
         monitor.autoKillTimeout = TimeInterval(config.autoKillTimeoutSeconds)
-        monitor.mcpIdleTimeout = TimeInterval(config.mcpIdleKillSeconds)
+        monitor.idleHelperTimeout = TimeInterval(config.idleHelperKillSeconds)
         self.processMonitor = monitor
     }
 
