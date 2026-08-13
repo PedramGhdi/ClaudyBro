@@ -107,13 +107,8 @@ private struct TabItem: View {
     @State private var isHovered = false
 
     private var tabTitle: String {
-        let dir = tab.activePane.processMonitor.currentDirectory
-        guard !dir.isEmpty else { return "Shell" }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if dir.hasPrefix(home) {
-            return "~" + dir.dropFirst(home.count)
-        }
-        return dir
+        let title = tab.activePane.processMonitor.displayTitle
+        return title.isEmpty ? "Shell" : title
     }
 
     var body: some View {

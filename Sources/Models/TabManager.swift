@@ -7,7 +7,51 @@ final class TabManager: ObservableObject {
     @Published var activeTabId: UUID?
 
     init() {
-        addNewTab()
+        if AppConfiguration.shared.restoreSession, let state = SessionState.load() {
+            restore(state)
+        }
+        if tabs.isEmpty { addNewTab() }
+    }
+
+    // MARK: - Session restore
+
+    /// Snapshot the current layout so it can be rebuilt next launch.
+    func captureSession() -> SessionState {
+        SessionState(
+            tabs: tabs.map { tab in
+                SessionState.TabState(
+                    layout: Self.layout(of: tab.root),
+                    activeLeafIndex: tab.root.allLeaves
+                        .firstIndex { $0.id == tab.activePaneId } ?? 0
+                )
+            },
+            activeTabIndex: activeIndex
+        )
+    }
+
+    private static func layout(of node: PaneNode) -> SessionState.PaneLayout {
+        switch node.content {
+        case .leaf(let pane):
+            // The live directory, not the one the pane started in — the point
+            // is to come back where the user left off.
+            let live = pane.processMonitor.currentDirectory
+            return .leaf(directory: live.isEmpty ? pane.initialDirectory : live)
+        case .split(let direction, let children):
+            return .split(
+                vertical: direction == .vertical,
+                children: children.map(layout)
+            )
+        }
+    }
+
+    private func restore(_ state: SessionState) {
+        for tabState in state.tabs where tabState.layout.leafCount > 0 {
+            let tab = TerminalTab(restoring: tabState)
+            tabs.append(tab)
+        }
+        guard !tabs.isEmpty else { return }
+        let index = min(max(state.activeTabIndex, 0), tabs.count - 1)
+        activeTabId = tabs[index].id
     }
 
     var activeTab: TerminalTab? {
@@ -167,6 +211,30 @@ final class TerminalTab: Identifiable, ObservableObject {
         let firstLeaf = PaneNode.leaf(initialDirectory: initialDirectory)
         self.root = firstLeaf
         self.activePaneId = firstLeaf.leafPane!.id
+    }
+
+    /// Rebuild a tab from a saved layout.
+    init(restoring state: SessionState.TabState) {
+        let rebuilt = TerminalTab.node(from: state.layout)
+        self.root = rebuilt
+        let leaves = rebuilt.allLeaves
+        let index = min(max(state.activeLeafIndex, 0), leaves.count - 1)
+        self.activePaneId = leaves[index].id
+    }
+
+    private static func node(from layout: SessionState.PaneLayout) -> PaneNode {
+        switch layout {
+        case .leaf(let directory):
+            return .leaf(initialDirectory: directory)
+        case .split(let vertical, let children):
+            // A split that somehow saved with no children would be a node with
+            // no terminal in it; fall back to a plain pane.
+            guard !children.isEmpty else { return .leaf() }
+            return PaneNode(.split(
+                vertical ? .vertical : .horizontal,
+                children.map(node)
+            ))
+        }
     }
 
     /// Convenience for the first leaf — used during init / fallbacks.

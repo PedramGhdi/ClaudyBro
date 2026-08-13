@@ -8,12 +8,17 @@ struct TerminalViewWrapper: NSViewRepresentable {
     @ObservedObject var processMonitor: ProcessMonitor
     var isActive: Bool
     var initialDirectory: String?
+    /// Identity used to scope broadcast input to sibling panes of one tab.
+    var paneId: UUID
+    var tabId: UUID
 
     func makeNSView(context: Context) -> ClaudyTerminalView {
         let terminalView = ClaudyTerminalView(frame: .zero)
         terminalView.configureAppearance()
         terminalView.isActiveTab = isActive
         terminalView.processMonitor = processMonitor
+        terminalView.paneId = paneId
+        terminalView.tabId = tabId
 
         let (executable, args, env) = processManager.resolveShellCommand()
         let startDir = initialDirectory
@@ -42,6 +47,17 @@ struct TerminalViewWrapper: NSViewRepresentable {
             // The monitor takes its own dup so it can ask the PTY which job is
             // in the foreground — the process it must never terminate.
             processMonitor?.startMonitoring(shellPID: pid, ptyMasterFd: masterFd)
+
+            // Startup command runs once the shell has had a moment to draw its
+            // first prompt, otherwise it lands mid-initialisation and the shell
+            // discards it.
+            let startup = AppConfiguration.shared.startupCommand
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !startup.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak terminalView] in
+                    terminalView?.send(txt: startup + "\n")
+                }
+            }
         }
 
         return terminalView
@@ -96,10 +112,16 @@ private final class LinkSanitizingDelegate: TerminalViewDelegate {
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         original?.sizeChanged(source: source, newCols: newCols, newRows: newRows)
     }
+    // Intercepted rather than forwarded. `LocalProcessTerminalView` routes both
+    // of these to its `processDelegate`, which this app never assigns, so the
+    // shell's title (OSC 0/1/2) and working directory (OSC 7) were being
+    // discarded — tab titles came from polling the process table instead.
     func setTerminalTitle(source: TerminalView, title: String) {
+        (original as? ClaudyTerminalView)?.hostDidSetTitle(title)
         original?.setTerminalTitle(source: source, title: title)
     }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        (original as? ClaudyTerminalView)?.hostDidUpdateDirectory(directory)
         original?.hostCurrentDirectoryUpdate(source: source, directory: directory)
     }
     func scrolled(source: TerminalView, position: Double) {
@@ -123,6 +145,8 @@ private final class LinkSanitizingDelegate: TerminalViewDelegate {
 
 final class ClaudyTerminalView: LocalProcessTerminalView {
     var isActiveTab: Bool = false
+    var paneId: UUID = UUID()
+    var tabId: UUID = UUID()
     weak var processMonitor: ProcessMonitor?
     private var keyMonitor: Any?
     private var linkDelegate: LinkSanitizingDelegate?
@@ -156,6 +180,14 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             self, selector: #selector(handleConfigurationChanged),
             name: .configurationChanged, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleJumpToPrompt(_:)),
+            name: .jumpToPrompt, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleBroadcastInput(_:)),
+            name: .broadcastInput, object: nil
+        )
 
         installKeyMonitor()
     }
@@ -178,11 +210,29 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     /// and write synchronously to a dup'd fd. This matches Ghostty's serialized I/O model,
     /// preventing terminal responses from leaking into the shell as plaintext.
     override func send(source: Terminal, data: ArraySlice<UInt8>) {
-        let fd = writeFd
-        guard fd >= 0 else {
+        guard writeToPTY(data) else {
             super.send(source: source, data: data)
             return
         }
+
+        // Mirror input to sibling panes. Done here rather than in `keyDown`
+        // because these are the exact bytes headed for the PTY — escape
+        // sequences for arrows and function keys included — so the other panes
+        // receive precisely what this one did, not a re-encoding of it.
+        if isActiveTab, AppConfiguration.shared.broadcastInput {
+            NotificationCenter.default.post(
+                name: .broadcastInput, object: nil,
+                userInfo: ["bytes": Array(data), "origin": paneId, "tab": tabId]
+            )
+        }
+    }
+
+    /// Write straight to the PTY, bypassing SwiftTerm's DispatchIO (which races
+    /// with its own reads on a separate queue). Returns false if unavailable.
+    @discardableResult
+    private func writeToPTY(_ data: ArraySlice<UInt8>) -> Bool {
+        let fd = writeFd
+        guard fd >= 0 else { return false }
         data.withUnsafeBufferPointer { ptr in
             guard let base = ptr.baseAddress else { return }
             var written = 0
@@ -192,14 +242,40 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
                 written += n
             }
         }
+        return true
+    }
+
+    @objc private func handleBroadcastInput(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let bytes = info["bytes"] as? [UInt8],
+              let origin = info["origin"] as? UUID,
+              let tab = info["tab"] as? UUID,
+              origin != paneId,        // don't echo back into the source pane
+              tab == tabId             // stay within the tab the user is in
+        else { return }
+
+        writeToPTY(bytes[...])
     }
 
     // MARK: - Commands & State
 
+    @objc private func handleJumpToPrompt(_ notification: Notification) {
+        guard isActiveTab else { return }
+        let previous = notification.userInfo?["previous"] as? Bool ?? true
+        if !jumpToPrompt(previous: previous) { NSSound.beep() }
+    }
+
     @objc private func handleTerminalCommand(_ notification: Notification) {
-        guard isActiveTab, let cmd = notification.userInfo?["command"] as? String else { return }
+        guard let cmd = notification.userInfo?["command"] as? String else { return }
+        // Broadcast reaches every live pane; everything else goes to the pane
+        // the user is actually looking at.
+        let broadcast = notification.userInfo?["broadcast"] as? Bool ?? false
+        guard broadcast || isActiveTab else { return }
         send(txt: cmd)
     }
+
+    /// Type into this terminal from outside the notification path.
+    func sendText(_ text: String) { send(txt: text) }
 
     /// Reset terminal modes that AI CLIs may have enabled but not cleaned up (e.g., Ctrl+C exit).
     @objc private func handleCLIExited(_ notification: Notification) {
@@ -278,6 +354,82 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
         if let mode { current.modeIndicator = mode }
         if let effort { current.effort = effort }
         processMonitor?.updateContextUsage(current)
+    }
+
+    // MARK: - Prompt Navigation (OSC 133)
+
+    /// Scroll to the previous or next shell prompt.
+    ///
+    /// Relies on OSC 133 marks, which a shell only emits with shell
+    /// integration installed — see Settings ▸ Terminal. Without them there is
+    /// nothing to jump to, so the call is a no-op rather than a guess.
+    /// Returns false when no further prompt exists in that direction.
+    @discardableResult
+    func jumpToPrompt(previous: Bool) -> Bool {
+        let terminal = getTerminal()
+        let buffer = terminal.buffer
+
+        // `bufferLine(atRow:)` is the public bounds-checked accessor: it returns
+        // nil past either end, so it doubles as the loop's terminating condition.
+        var row = buffer.yDisp + (previous ? -1 : 1)
+        while row >= 0, terminal.bufferLine(atRow: row) != nil {
+            if terminal.semanticRowKind(at: row) == .initial {
+                buffer.yDisp = row
+                super.scrolled(source: terminal, yDisp: row)
+                needsDisplay = true
+                return true
+            }
+            row += previous ? -1 : 1
+        }
+        return false
+    }
+
+    // MARK: - Copy on Select
+
+    /// Copy the selection to the clipboard when the drag ends.
+    ///
+    /// Hooked to mouse-up rather than `selectionChanged`, which fires on every
+    /// intermediate position during a drag — that would rewrite the pasteboard
+    /// dozens of times per selection and clobber the clipboard mid-gesture.
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        guard AppConfiguration.shared.copyOnSelect, selection.active else { return }
+
+        let text = selection.getSelectedText()
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - Shell-Reported Title & Directory
+
+    /// Title set by the shell via OSC 0/1/2.
+    func hostDidSetTitle(_ title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        processMonitor?.hostTitle = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Working directory reported by the shell via OSC 7, as a `file://` URL.
+    ///
+    /// This arrives the instant the shell changes directory, where the process
+    /// table is only sampled every few seconds. Remote reports are ignored: an
+    /// SSH session happily emits OSC 7 for a path on the other machine, and
+    /// inheriting that into a new local tab would land it somewhere that does
+    /// not exist here.
+    func hostDidUpdateDirectory(_ directory: String?) {
+        guard let raw = directory,
+              let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.isFileURL
+        else { return }
+
+        let host = url.host ?? ""
+        let isLocal = host.isEmpty
+            || host == "localhost"
+            || host == ProcessInfo.processInfo.hostName
+            || host == ProcessInfo.processInfo.hostName.replacingOccurrences(of: ".local", with: "")
+        guard isLocal else { return }
+
+        processMonitor?.reportHostDirectory(url.path)
     }
 
     // MARK: - Alternate Screen Scoping
@@ -364,7 +516,23 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             font = NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
         }
         nativeForegroundColor = theme.foreground
-        nativeBackgroundColor = theme.background
+        // SwiftTerm carries the alpha through to the layer that paints the
+        // background and margins, so translucency needs nothing more than a
+        // colour with alpha — plus a non-opaque window, set in MainWindow.
+        let opacity = min(max(config.backgroundOpacity, 0.3), 1.0)
+        nativeBackgroundColor = opacity < 1.0
+            ? theme.background.withAlphaComponent(opacity)
+            : theme.background
+
+        // The caret kept SwiftTerm's default colour and shape, so it ignored the
+        // selected theme entirely. `cursorStyleChanged` is the public path that
+        // also refreshes the caret view; setting `options` alone would not.
+        caretColor = theme.resolvedCursor
+        let style = CursorStyle.allCases.first { $0.tagName == config.cursorStyle }
+            ?? .steadyBlock
+        getTerminal().options.cursorStyle = style
+        cursorStyleChanged(source: getTerminal(), newStyle: style)
+
         changeScrollback(5000)
         getTerminal().options.kittyImageCacheLimitBytes = 1_000_000
         getTerminal().options.enableSixelReported = false
@@ -428,6 +596,9 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
             return true
         case "\u{7F}": // Cmd+Delete → kill entire line (Ctrl+U)
             send(txt: "\u{15}")
+            return true
+        case "=": // Alias for Cmd++ so the shortcut works without pressing Shift.
+            AppCommands.adjustFontSize(by: 1)
             return true
         default:
             return super.performKeyEquivalent(with: event)

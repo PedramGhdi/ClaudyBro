@@ -26,6 +26,25 @@ struct ClaudyBroApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
 
+            // Find. SwiftTerm ships the find bar and its search engine; it only
+            // ever surfaced through the standard Edit ▸ Find menu items, which
+            // this app never registered.
+            CommandGroup(after: .textEditing) {
+                Divider()
+
+                Button("Find…") { AppCommands.find(.showFindInterface) }
+                    .keyboardShortcut("f", modifiers: .command)
+
+                Button("Find Next") { AppCommands.find(.nextMatch) }
+                    .keyboardShortcut("g", modifiers: .command)
+
+                Button("Find Previous") { AppCommands.find(.previousMatch) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Button("Use Selection for Find") { AppCommands.find(.setSearchString) }
+                    .keyboardShortcut("e", modifiers: .command)
+            }
+
             // Tab commands
             CommandMenu("Tab") {
                 Button("New Tab") {
@@ -80,6 +99,37 @@ struct ClaudyBroApp: App {
 
                 Divider()
 
+                // ⌘= is accepted as well, handled in ClaudyTerminalView — it has
+                // no menu item of its own, so the two can never both fire.
+                Button("Bigger Text") { AppCommands.adjustFontSize(by: 1) }
+                    .keyboardShortcut("+", modifiers: .command)
+
+                Button("Smaller Text") { AppCommands.adjustFontSize(by: -1) }
+                    .keyboardShortcut("-", modifiers: .command)
+
+                Button("Actual Size") { AppCommands.resetFontSize() }
+                    .keyboardShortcut("0", modifiers: .command)
+
+                Divider()
+
+                // Needs OSC 133 marks — Settings ▸ Terminal installs the shell
+                // hooks that emit them.
+                Button("Previous Prompt") {
+                    NotificationCenter.default.post(
+                        name: .jumpToPrompt, object: nil, userInfo: ["previous": true]
+                    )
+                }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+
+                Button("Next Prompt") {
+                    NotificationCenter.default.post(
+                        name: .jumpToPrompt, object: nil, userInfo: ["previous": false]
+                    )
+                }
+                .keyboardShortcut(.downArrow, modifiers: .command)
+
+                Divider()
+
                 Button("Split Vertically") {
                     NotificationCenter.default.post(name: .splitPaneVertical, object: nil)
                 }
@@ -99,6 +149,12 @@ struct ClaudyBroApp: App {
                     NotificationCenter.default.post(name: .nextPane, object: nil)
                 }
                 .keyboardShortcut("]", modifiers: [.command, .option])
+
+                Toggle("Broadcast Input to All Panes", isOn: Binding(
+                    get: { AppConfiguration.shared.broadcastInput },
+                    set: { AppConfiguration.shared.broadcastInput = $0 }
+                ))
+                .keyboardShortcut("i", modifiers: [.command, .shift])
             }
         }
     }
@@ -129,6 +185,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if AppConfiguration.shared.restoreSession {
+            Self.tabManager?.captureSession().save()
+        } else {
+            // Leaving a stale snapshot behind would resurrect an old layout the
+            // moment the setting is switched back on.
+            SessionState.clear()
+        }
         try? FileManager.default.removeItem(atPath: Constants.tempDirectory)
     }
 }
