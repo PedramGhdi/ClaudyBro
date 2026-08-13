@@ -483,8 +483,8 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
     /// Also prevents feedPrepare() from clearing active text selection.
     override func dataReceived(slice: ArraySlice<UInt8>) {
         updateAltScreenScope()
-        let filtered = altScreenFilter.filter(slice)
-        guard !filtered.isEmpty else { return }
+        let segments = altScreenFilter.filter(slice)
+        guard !segments.isEmpty else { return }
 
         let wasScrolledUp = canScroll && scrollPosition < 1.0
         let savedYDisp = getTerminal().buffer.yDisp
@@ -495,7 +495,16 @@ final class ClaudyTerminalView: LocalProcessTerminalView {
 
         if wasScrolledUp { suppressScrollerUpdate = true }
 
-        super.dataReceived(slice: filtered)
+        for segment in segments {
+            switch segment {
+            case .data(let bytes):
+                super.dataReceived(slice: bytes)
+            case .clearViewport:
+                // Runs between feeds, so the scroll sees the screen exactly as
+                // the CLI's next byte will find it.
+                ViewportCanvas.clearPreservingScrollback(getTerminal())
+            }
+        }
 
         allowMouseReporting = savedMouseReporting
 

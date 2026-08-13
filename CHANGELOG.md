@@ -2,6 +2,12 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.15.2](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.2) — A CLI Launched Over Existing Output Starts on a Clean Screen
+
+### Fixed
+- **Starting Claude Code with output already on screen no longer interleaves the two.** Claude opens with `ESC[?1049h`, `ESC[2J`, `ESC[H` — switch to the alternate buffer, clear it, go home. The scrollback filter swallows the switch deliberately, so the conversation lands in the main buffer where it can be scrolled back; the bug was that the same latch then swallowed the clear that came with it, on the theory that a full-screen erase would destroy conversation history. With neither surviving, the cursor went home onto whatever the shell had left on screen and the CLI painted into it cell by cell: box borders fused with directory listings, `Welcome back` sharing a row with a half-overwritten prompt. The swallowed switch now hands over the blank screen it promised, by **scrolling** the viewport into scrollback rather than erasing it — `cmdEraseInDisplay` blanks the visible rows where they sit and never pushes them into history, so simply passing the erase through would have deleted the output the filter exists to preserve. Everything that was on screen when the CLI launched is now one scroll away, and the CLI starts on an empty grid.
+- **The clear that pairs with the buffer switch is passed through**, wiping any row the scroll left below the cursor. Every later one is still stripped: a CLI redraws its live frame after a window resize but not the transcript above it, so honouring that erase would blank output nothing is going to repaint. The line is drawn on painting — a clear arriving before the CLI has drawn anything is the entry clear, one arriving after it is not.
+
 ## [v1.15.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.1) — Clicked File Paths Open in Finder, Not a Browser
 
 ### Fixed
