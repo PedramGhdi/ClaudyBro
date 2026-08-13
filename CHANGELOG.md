@@ -2,6 +2,15 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.15.1](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.1) — Clicked File Paths Open in Finder, Not a Browser
+
+### Fixed
+- **⌘-clicking a file path now reveals it in Finder instead of opening a browser tab.** The link handler had exactly two branches — pass through anything carrying a scheme, and prepend `https://` to everything else — with no filesystem branch at all. SwiftTerm's implicit link detector matches paths as readily as URLs, so `~/backups/keys.tar.gz.gpg` was classified as a bare hostname and sent to the browser as `https://~/backups/keys.tar.gz.gpg`. Paths that exist on disk now open their containing folder with the file selected; a directory opens as a Finder window. Revealing rather than opening is deliberate: terminal output is untrusted, and a click should never hand an archive to Archive Utility or launch an app bundle.
+- **A path that resolves to nothing no longer opens a bogus browser tab.** `src/typo.swift`, or any path in output from an SSH session, used to become a URL. The browser fallback now requires the first segment to read as a host — a dotted name with a real TLD, or a dotted-quad address, optionally with a port. `github.com/user/repo` still opens in the browser; `src/main.swift` beeps and does nothing.
+- **Relative paths resolve against the shell's working directory**, which OSC 7 keeps current, so clicking `Sources/Views/TerminalViewWrapper.swift` in `ls` output works from wherever the shell happens to be.
+- **Compiler-style `file:line:col` suffixes are handled.** SwiftTerm's path pattern admits colons and digits mid-match and only forbids a match *ending* on a colon, so `Sources/Foo.swift:42:10` arrived with its location attached and matched nothing on disk. The suffix is now stripped, as is trailing punctuation that prose pulls in (`see ~/foo/bar.txt.`).
+- **`file:` URLs are revealed rather than opened**, including the bare `file:/path` form, `file://localhost/…`, and paths with unencoded spaces.
+
 ## [v1.15.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.0) — Live MCP Servers Are Off-Limits, Font Handling Fixed
 
 ### Fixed
