@@ -2,6 +2,21 @@
 
 All notable changes to ClaudyBro are documented here.
 
+## [v1.16.0](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.16.0) — Background Jobs Announce Themselves
+
+### New Features
+- **The status bar names what is running and what it costs.** A background job — a dev server, a watcher, a deploy, the shell an AI CLI started and never mentioned again — used to register as nothing more than a bump in a "3 child processes" counter, which said neither what was running nor what it was eating. That counter is replaced, whenever there is a real job, by the job itself: `● npm run dev +2 · 143% · 512 MB`, with the dot green while something is genuinely burning CPU and dim for a watcher parked at zero still holding memory. Clicking it opens the process panel as before. The AI CLI and its MCP servers are deliberately left out — they are represented elsewhere in the UI, and an MCP server idling at 0% is its normal state, not news.
+- **Work in other panes and tabs is visible without switching to them.** The status bar can only ever speak for the pane it is rendering, so a deploy left running in tab 3 was invisible from anywhere else in the app. A `⧉ 2 running elsewhere` badge now sits on the right of the status bar, with a popover listing each pane, its busiest job, and its CPU and memory. Tabs carrying running work show a small dot in the tab strip, green while it is busy, and hovering it names the jobs.
+- **Per-process CPU in the process panel**, alongside the memory figure that was already there, with a total for the whole tree in the footer. Finding the process responsible for a hot fan no longer means leaving the terminal for Activity Monitor.
+- **Processes are named by their command line, not just their executable.** `npm run dev`, `npm run build` and a one-shot `npm ci` were all "npm Process"; `node scripts/monitor.js` and every other node invocation on the machine were all "node". A process now reads as it was typed, with path arguments shortened to their last component so a 90-character `node` invocation still fits (`node monitor.js`).
+
+### Fixed
+- **CPU measurement was 41.67× too low on Apple Silicon.** `proc_taskinfo` reports its CPU totals in mach absolute time units, which the code divided by a billion as if they were nanoseconds. On Intel those are the same thing, so the bug was invisible; on Apple Silicon the timebase is 125/3, and a process pinning a full core measured as 2%. Nothing displayed this number before, so the only symptom was that the idle thresholds were far stricter than they read: "idle" was documented and intended as *under 0.01 CPU-seconds between polls*, but actually meant under 0.42 — so a CLI helper doing real work at up to ~20% of a core was classified as idle and became a candidate for reaping. Both the new readouts and the existing idle detection now work in real seconds.
+
+### Changed
+- **The process poll no longer slows to 15s while a job is running.** It backed off after ~30 seconds without an AI CLI, on the assumption that no CLI meant nothing happening — which made the new CPU readout a fifteen-second-old memory in exactly the case it exists for. A shell with a job of the user's own running now stays on the normal interval; a genuinely idle shell still backs off.
+- Because process descriptions changed, a pin saved against a generic old label (`npm Process`) no longer matches and must be re-pinned. Named processes — MCP servers, language servers, AI CLIs — are unaffected.
+
 ## [v1.15.2](https://github.com/PedramGhdi/ClaudyBro/releases/tag/v1.15.2) — A CLI Launched Over Existing Output Starts on a Clean Screen
 
 ### Fixed

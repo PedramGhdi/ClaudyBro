@@ -104,11 +104,19 @@ private struct TabItem: View {
     let onSelect: () -> Void
     let onClose: () -> Void
 
+    @ObservedObject private var activity = ActivityRegistry.shared
     @State private var isHovered = false
 
     private var tabTitle: String {
         let title = tab.activePane.processMonitor.displayTitle
         return title.isEmpty ? "Shell" : title
+    }
+
+    /// Work running in any pane of this tab. The status bar can only speak for
+    /// the tab you are looking at, so the strip has to carry the signal for
+    /// the rest — otherwise a deploy two tabs over runs completely unannounced.
+    private var runningWork: [PaneActivity] {
+        tab.root.allLeaves.compactMap { activity.panes[$0.processMonitor.id] }
     }
 
     var body: some View {
@@ -130,6 +138,16 @@ private struct TabItem: View {
             }
 
             Spacer(minLength: 4)
+
+            // Running-work dot
+            let work = runningWork
+            if !work.isEmpty {
+                Circle()
+                    .fill(work.contains(where: \.isBusy) ? Color.green : Color(nsColor: Constants.statusTextColor))
+                    .frame(width: 5, height: 5)
+                    .padding(.trailing, 5)
+                    .help(workTooltip(work))
+            }
 
             // Tab title
             Text(tabTitle)
@@ -165,5 +183,15 @@ private struct TabItem: View {
         .cursor(.pointingHand)
         .animation(.easeInOut(duration: 0.12), value: isActive)
         .animation(.easeInOut(duration: 0.12), value: isHovered)
+    }
+
+    private func workTooltip(_ work: [PaneActivity]) -> String {
+        let jobs = work.reduce(0) { $0 + $1.jobCount }
+        let cpu = work.reduce(0.0) { $0 + $1.cpuPercent }
+        let bytes = work.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+        let memory = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+        let names = work.compactMap(\.topJob).joined(separator: ", ")
+        let cost = "\(jobs) running — \(Int(cpu.rounded()))% CPU, \(memory)"
+        return names.isEmpty ? cost : "\(cost)\n\(names)"
     }
 }

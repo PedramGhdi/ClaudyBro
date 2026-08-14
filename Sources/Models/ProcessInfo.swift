@@ -25,9 +25,37 @@ struct TrackedProcess: Identifiable {
     var orphanSince: Date?
     var confirmedOrphanSince: Date?
     var memoryBytes: UInt64 = 0
+    /// CPU burned since the previous sample, as a share of one core. Work
+    /// spread over threads legitimately exceeds 100.
+    var cpuPercent: Double = 0
+    /// When `lastCPUTime` was read. The poll interval is adaptive (2s–15s), so
+    /// turning a CPU-time delta into a percentage means measuring the gap
+    /// rather than assuming it.
+    var lastSampleTime: Date?
+    /// Polls this process has been seen in. Keeps sub-poll helpers — the
+    /// `bash -c` a CLI spawns for a two-second grep — out of the status bar,
+    /// where they would do nothing but flicker.
+    var pollCount: Int = 0
 
     var formattedMemory: String {
         ByteCountFormatter.string(fromByteCount: Int64(memoryBytes), countStyle: .memory)
+    }
+
+    var formattedCPU: String {
+        cpuPercent >= 10
+            ? "\(Int(cpuPercent.rounded()))% CPU"
+            : String(format: "%.1f%% CPU", cpuPercent)
+    }
+
+    /// A command running in this shell whose cost is the user's to see.
+    ///
+    /// Excludes the AI CLI itself and its MCP servers: both are already
+    /// represented elsewhere in the UI, and an MCP server sitting at 0% is the
+    /// normal case, not news. What is left is what actually runs unnoticed —
+    /// a dev server, a deploy script, a watcher, the background shell a CLI
+    /// started and never mentioned again.
+    var isRunningJob: Bool {
+        cliProvider == nil && !isMCPServer && pollCount >= 2
     }
 
     var isNodeProcess: Bool {

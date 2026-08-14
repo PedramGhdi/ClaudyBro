@@ -9,6 +9,10 @@ import Foundation
 /// `CLIProvider.allowsHelperReaping`), the entire subtree is protected while
 /// they run.
 final class ProcessMonitor: ObservableObject {
+    /// Identifies this pane in `ActivityRegistry`, so the status bar can report
+    /// on panes other than the one it is rendering.
+    let id = UUID()
+
     @Published var childProcesses: [TrackedProcess] = []
     @Published var orphanedProcesses: [TrackedProcess] = []
     @Published var currentDirectory: String = ""
@@ -115,6 +119,7 @@ final class ProcessMonitor: ObservableObject {
         }
         childProcesses = []
         orphanedProcesses = []
+        ActivityRegistry.shared.clear(paneID: id)
     }
 
     /// Kill a single orphaned process by PID.
@@ -309,12 +314,23 @@ final class ProcessMonitor: ObservableObject {
             // CPU is sampled for every descendant, not just killable ones, so
             // the process panel shows real activity for the user's own jobs.
             let cpuTime = ProcessTreeQuery.getProcessCPUTime(pid: entry.pid)
+            let now = Date()
+            let elapsed = tracked.lastSampleTime.map { now.timeIntervalSince($0) } ?? 0
             tracked.previousCPUTime = tracked.lastCPUTime
             tracked.lastCPUTime = cpuTime
+            tracked.lastSampleTime = now
+            tracked.pollCount += 1
 
             let cpuDelta = tracked.lastCPUTime - tracked.previousCPUTime
+            // Turn the CPU-time delta into a percentage of one core. The
+            // interval is measured rather than assumed because the poll rate
+            // moves between 2s and 15s; dividing by a nominal interval would
+            // report a job as three times busier the moment the CLI exits.
+            if elapsed >= 0.5, tracked.previousCPUTime > 0 {
+                tracked.cpuPercent = max(0, cpuDelta / elapsed * 100)
+            }
             if cpuDelta > 0.01 || tracked.previousCPUTime == 0 {
-                tracked.lastActiveTime = Date()
+                tracked.lastActiveTime = now
             }
             let isIdleNow = tracked.previousCPUTime > 0 && cpuDelta < 0.01
 
@@ -535,8 +551,13 @@ final class ProcessMonitor: ObservableObject {
         let supportsTelemetry = detectedCLI?.supportsContextTelemetry ?? false
         let newContextUsage: ContextUsage? = supportsTelemetry ? pollContextFile() : nil
 
-        // Adaptive poll interval: fast when CLI active, slow when fully idle
-        adjustPollInterval(cliActive: cliStillRunning)
+        // Adaptive poll interval: fast when CLI active, slow when fully idle.
+        // A shell with no CLI but a running job still needs a live readout —
+        // dropping to 15s would make the status bar's CPU figure a memory.
+        adjustPollInterval(
+            cliActive: cliStillRunning,
+            jobsRunning: updated.contains(where: \.isRunningJob)
+        )
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -549,16 +570,46 @@ final class ProcessMonitor: ObservableObject {
             } else if !supportsTelemetry {
                 self.clearContextUsage()
             }
+            self.publishActivity()
         }
+    }
+
+    /// Summarise this pane's running work for the shared registry.
+    ///
+    /// Runs on the main thread so it can read `displayTitle`, which depends on
+    /// the OSC-set host title the terminal view publishes there.
+    private func publishActivity() {
+        let jobs = childProcesses.filter(\.isRunningJob)
+        guard !jobs.isEmpty else {
+            ActivityRegistry.shared.clear(paneID: id)
+            return
+        }
+        let busiest = jobs.max { $0.cpuPercent < $1.cpuPercent }
+        ActivityRegistry.shared.update(
+            PaneActivity(
+                paneID: id,
+                paneTitle: displayTitle,
+                jobCount: jobs.count,
+                topJob: busiest.map {
+                    $0.processDescription.isEmpty ? $0.name : $0.processDescription
+                },
+                cpuPercent: jobs.reduce(0) { $0 + $1.cpuPercent },
+                memoryBytes: jobs.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+            )
+        )
     }
 
     // MARK: - Adaptive Poll Interval
 
-    /// Adjust poll frequency: 2s when CLI active, default (5s) normally, 15s when fully idle.
-    private func adjustPollInterval(cliActive: Bool) {
+    /// Adjust poll frequency: 2s when CLI active, default (5s) while a job of
+    /// the user's own is running, 15s when the shell is genuinely idle.
+    private func adjustPollInterval(cliActive: Bool, jobsRunning: Bool) {
         let target: TimeInterval
         if cliActive {
             target = min(monitorInterval, 2)
+            idlePollStreak = 0
+        } else if jobsRunning {
+            target = monitorInterval
             idlePollStreak = 0
         } else {
             idlePollStreak += 1
