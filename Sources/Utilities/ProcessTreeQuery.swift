@@ -82,9 +82,24 @@ enum ProcessTreeQuery {
         let size = Int32(MemoryLayout<proc_taskinfo>.size)
         let result = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &taskInfo, size)
         guard result == size else { return 0 }
-        let nanoseconds = taskInfo.pti_total_user + taskInfo.pti_total_system
-        return Double(nanoseconds) / 1_000_000_000.0
+        let ticks = taskInfo.pti_total_user + taskInfo.pti_total_system
+        return Double(ticks) * machTicksToSeconds
     }
+
+    /// Seconds per mach absolute time unit.
+    ///
+    /// `proc_taskinfo`'s CPU totals come from `TASK_ABSOLUTETIME_INFO` and are
+    /// in mach time units, not nanoseconds. The two are the same thing on
+    /// Intel, which is why dividing by 1e9 went unnoticed; on Apple Silicon the
+    /// timebase is 125/3, so every CPU reading was 41.67× too small — a process
+    /// pinning a core measured as 2%.
+    private static let machTicksToSeconds: Double = {
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.denom != 0 else {
+            return 1.0 / 1_000_000_000.0
+        }
+        return Double(info.numer) / Double(info.denom) / 1_000_000_000.0
+    }()
 
     /// Check if a process is alive (signal 0 test).
     static func isProcessAlive(_ pid: pid_t) -> Bool {
@@ -222,15 +237,29 @@ enum ProcessTreeQuery {
         // AI CLI tools
         if let provider = detectCLIProvider(args: args) { return provider.processDescription }
 
-        // npm
-        if joined.contains("npm") { return "npm Process" }
+        // Everything else is an ordinary command, and the executable name alone
+        // does not identify it: "npm Process" and "node" are the same label for
+        // a dev server, a deploy and a one-shot script. These are precisely the
+        // long-running jobs the status bar has to name, so show the command.
+        return commandSummary(args: args)
+    }
 
-        // Fallback: use executable name
-        if let first = args.first {
-            return URL(fileURLWithPath: first).lastPathComponent
+    /// Short readable form of a command line — the executable plus its first
+    /// couple of meaningful arguments, with path arguments reduced to their
+    /// last component so a 90-character `node` invocation still fits a
+    /// status bar.
+    private static func commandSummary(args: [String]) -> String {
+        guard let executable = args.first, !executable.isEmpty else {
+            return "Unknown Process"
         }
-
-        return "Unknown Process"
+        var parts = [URL(fileURLWithPath: executable).lastPathComponent]
+        for arg in args.dropFirst() {
+            guard parts.count < 3 else { break }
+            guard !arg.hasPrefix("-"), !arg.isEmpty else { continue }
+            parts.append(arg.contains("/") ? URL(fileURLWithPath: arg).lastPathComponent : arg)
+        }
+        let summary = parts.joined(separator: " ")
+        return summary.count > 44 ? String(summary.prefix(43)) + "…" : summary
     }
 
     /// Identify which AI CLI a process is, or nil if it isn't one.

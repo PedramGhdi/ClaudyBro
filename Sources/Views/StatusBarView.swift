@@ -5,23 +5,37 @@ struct StatusBarView: View {
     @ObservedObject var processMonitor: ProcessMonitor
     let shellPID: pid_t
 
+    @ObservedObject private var activity = ActivityRegistry.shared
     @State private var showOrphanPanel = false
     @State private var showChildPanel = false
+    @State private var showElsewherePanel = false
     @State private var tick = Date()
 
     private let textColor = Color(nsColor: Constants.statusTextColor)
     private let countdownTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    /// Work running in this pane, if any.
+    private var localActivity: PaneActivity? { activity.panes[processMonitor.id] }
+
+    /// Work running in every *other* pane and tab — the deploy you left in tab
+    /// 3 and forgot about.
+    private var elsewhere: [PaneActivity] { activity.elsewhere(than: processMonitor.id) }
+
     var body: some View {
         ZStack {
-            // Left-aligned: PID + child processes
+            // Left-aligned: PID + what this pane is running
             HStack(spacing: 12) {
                 if shellPID > 0 {
                     label("PID \(shellPID)")
                 }
 
+                // A job the user can see the cost of outranks a bare count of
+                // children: "3 child processes" never said what was running or
+                // what it was costing, which is the whole question.
                 let childCount = processMonitor.childProcesses.count
-                if childCount > 0 {
+                if let local = localActivity {
+                    activityChip(local)
+                } else if childCount > 0 {
                     Button(action: { showChildPanel.toggle() }) {
                         label("\(childCount) child \(childCount == 1 ? "process" : "processes")")
                     }
@@ -40,9 +54,12 @@ struct StatusBarView: View {
                 contextUsageView
             }
 
-            // Right-aligned: orphan badge
-            HStack {
+            // Right-aligned: other panes' work, then orphans
+            HStack(spacing: 10) {
                 Spacer()
+                if !elsewhere.isEmpty {
+                    elsewhereBadge
+                }
                 if !processMonitor.orphanedProcesses.isEmpty {
                     orphanBadge
                 }
@@ -55,6 +72,72 @@ struct StatusBarView: View {
         .onReceive(countdownTimer) { newTick in
             // Only update tick when orphans exist — avoids unnecessary re-renders
             if !processMonitor.orphanedProcesses.isEmpty { tick = newTick }
+        }
+    }
+
+    // MARK: - Running Work (this pane)
+
+    /// Names the busiest job in this pane and what it is costing. Green dot
+    /// when it is actually burning CPU, dim when it is a watcher sitting idle
+    /// holding memory — that still costs something, so it still shows.
+    private func activityChip(_ local: PaneActivity) -> some View {
+        Button(action: { showChildPanel.toggle() }) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(local.isBusy ? Color.green : textColor.opacity(0.55))
+                    .frame(width: 6, height: 6)
+
+                Text(local.summary)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Text("\(local.formattedCPU) · \(local.formattedMemory)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(local.isBusy ? .green : textColor.opacity(0.7))
+                    .fixedSize()
+            }
+            // Keep a long command from colliding with the centred context read-out.
+            .frame(maxWidth: 320, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cursor(.pointingHand)
+        .help("\(local.jobCount) running — \(local.formattedCPU) CPU, \(local.formattedMemory). Click for details.")
+        .popover(isPresented: $showChildPanel, arrowEdge: .top) {
+            ChildProcessPanel(processMonitor: processMonitor)
+        }
+    }
+
+    // MARK: - Running Work (other panes and tabs)
+
+    private var elsewhereBadge: some View {
+        let others = elsewhere
+        let jobs = others.reduce(0) { $0 + $1.jobCount }
+        let cpu = others.reduce(0.0) { $0 + $1.cpuPercent }
+        let busy = cpu >= 5
+        let color = busy ? Color.green : textColor
+
+        return Button(action: { showElsewherePanel.toggle() }) {
+            HStack(spacing: 5) {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: 10))
+                Text("\(jobs) running elsewhere")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                if busy {
+                    Text("\(Int(cpu.rounded()))%")
+                        .font(.system(size: 11, design: .monospaced))
+                }
+            }
+            .foregroundColor(color)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cursor(.pointingHand)
+        .help("Work running in other panes and tabs. Click for details.")
+        .popover(isPresented: $showElsewherePanel, arrowEdge: .top) {
+            ElsewhereActivityPanel(activities: others)
         }
     }
 
@@ -194,6 +277,73 @@ struct StatusBarView: View {
     }
 }
 
+// MARK: - Elsewhere Activity Panel (popover content)
+
+/// Lists what the panes and tabs the user is *not* looking at are running.
+struct ElsewhereActivityPanel: View {
+    let activities: [PaneActivity]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Running in Other Panes")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(activities.reduce(0) { $0 + $1.jobCount }) total")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(activities) { pane in
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(pane.isBusy ? Color.green : Color.secondary.opacity(0.5))
+                                .frame(width: 7, height: 7)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pane.summary)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(pane.paneTitle.isEmpty ? "Shell" : pane.paneTitle)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.head)
+                            }
+
+                            Spacer()
+
+                            Text("\(pane.formattedCPU) · \(pane.formattedMemory)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(pane.isBusy ? .green : .secondary)
+                                .fixedSize()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+
+                        Divider().padding(.leading, 33)
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+
+            Text("Switch tabs with ⌘1–⌘9 or ⌘⇧] to reach these.")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+        }
+        .frame(width: 340)
+    }
+}
+
 // MARK: - Child Process Panel (popover content)
 
 struct ChildProcessPanel: View {
@@ -238,9 +388,29 @@ struct ChildProcessPanel: View {
                     }
                 }
                 .frame(maxHeight: 300)
+
+                Divider()
+
+                HStack {
+                    Text(totalsText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
         }
         .frame(width: 380)
+    }
+
+    /// What this pane's whole process tree currently costs.
+    private var totalsText: String {
+        let procs = processMonitor.childProcesses
+        let cpu = procs.reduce(0.0) { $0 + $1.cpuPercent }
+        let bytes = procs.reduce(UInt64(0)) { $0 + $1.memoryBytes }
+        let memory = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+        return "Total: \(Int(cpu.rounded()))% CPU · \(memory)"
     }
 }
 
@@ -272,6 +442,12 @@ struct ChildProcessRow: View {
                         Text(process.formattedMemory)
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(.secondary)
+                    }
+
+                    if process.cpuPercent >= 0.1 {
+                        Text(process.formattedCPU)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(process.cpuPercent >= 25 ? .orange : .secondary)
                     }
 
                     if process.isMCPServer {
